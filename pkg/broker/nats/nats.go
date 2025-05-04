@@ -19,8 +19,6 @@ type NATSBroker struct {
 	conn      *nats.Conn
 	subs      map[string]*nats.Subscription
 	subsLock  sync.RWMutex
-	respSubs  map[string]chan *model.Message
-	respLock  sync.RWMutex
 	queueName string
 }
 
@@ -58,7 +56,6 @@ func New(opts Options) (*NATSBroker, error) {
 	return &NATSBroker{
 		conn:      conn,
 		subs:      make(map[string]*nats.Subscription),
-		respSubs:  make(map[string]chan *model.Message),
 		queueName: opts.QueueName,
 	}, nil
 }
@@ -95,17 +92,32 @@ func (b *NATSBroker) Subscribe(ctx context.Context, topic string, handler broker
 	default:
 	}
 
-	// Check if we already have a subscription for this topic
-	b.subsLock.RLock()
-	_, exists := b.subs[topic]
-	b.subsLock.RUnlock()
+	// Use a mutex to ensure only one subscription is created per topic
+	b.subsLock.Lock()
+	defer b.subsLock.Unlock()
 
-	if exists {
-		return nil // Already subscribed
+	// Check if we already have a subscription for this topic
+	if sub, exists := b.subs[topic]; exists {
+		// If the subscription exists but is invalid, remove it
+		if sub == nil || sub.IsValid() == false {
+			delete(b.subs, topic)
+		} else {
+			return nil // Already subscribed with a valid subscription
+		}
 	}
+
+	// Create a new context for this subscription
+	subCtx, cancel := context.WithCancel(ctx)
 
 	// Subscribe to the topic with a queue group
 	sub, err := b.conn.QueueSubscribe(topic, b.queueName, func(msg *nats.Msg) {
+		// Check if the context is still valid
+		select {
+		case <-subCtx.Done():
+			return // Context is canceled, don't process the message
+		default:
+		}
+
 		// Unmarshal the message
 		var m model.Message
 		if err := json.Unmarshal(msg.Data, &m); err != nil {
@@ -114,8 +126,12 @@ func (b *NATSBroker) Subscribe(ctx context.Context, topic string, handler broker
 			return
 		}
 
+		// Create a context for this handler call
+		handlerCtx, handlerCancel := context.WithCancel(subCtx)
+		defer handlerCancel()
+
 		// Call the handler
-		resp, err := handler(ctx, &m)
+		resp, err := handler(handlerCtx, &m)
 		if err != nil {
 			// Log error and return
 			fmt.Printf("Error handling message: %v\n", err)
@@ -127,21 +143,33 @@ func (b *NATSBroker) Subscribe(ctx context.Context, topic string, handler broker
 			// Set the response topic to the correlation ID
 			resp.Header.Topic = m.Header.CorrelationID
 
-			// Publish the response
-			if err := b.Publish(ctx, resp); err != nil {
+			// Publish the response using a background context to ensure it's sent
+			// even if the original context is canceled
+			if err := b.Publish(context.Background(), resp); err != nil {
 				fmt.Printf("Error publishing response: %v\n", err)
 			}
 		}
 	})
 
 	if err != nil {
+		cancel() // Clean up the context if subscription fails
 		return fmt.Errorf("failed to subscribe to topic: %w", err)
 	}
 
 	// Store the subscription
-	b.subsLock.Lock()
 	b.subs[topic] = sub
-	b.subsLock.Unlock()
+
+	// Start a goroutine to clean up the subscription when the context is done
+	go func() {
+		<-ctx.Done()
+		b.subsLock.Lock()
+		if sub, exists := b.subs[topic]; exists && sub != nil {
+			sub.Unsubscribe()
+			delete(b.subs, topic)
+		}
+		b.subsLock.Unlock()
+		cancel() // Clean up the subscription context
+	}()
 
 	return nil
 }
@@ -152,58 +180,47 @@ func (b *NATSBroker) Request(ctx context.Context, req *model.Message, timeoutMs 
 		return nil, errors.New("request message cannot be nil")
 	}
 
-	// Create a channel to receive the response
-	respChan := make(chan *model.Message, 1)
-
-	// Store the response channel
-	b.respLock.Lock()
-	b.respSubs[req.Header.CorrelationID] = respChan
-	b.respLock.Unlock()
-
-	// Clean up when done
-	defer func() {
-		b.respLock.Lock()
-		delete(b.respSubs, req.Header.CorrelationID)
-		b.respLock.Unlock()
-		close(respChan)
-	}()
-
-	// Subscribe to the response topic (correlation ID)
-	sub, err := b.conn.Subscribe(req.Header.CorrelationID, func(msg *nats.Msg) {
-		// Unmarshal the message
-		var m model.Message
-		if err := json.Unmarshal(msg.Data, &m); err != nil {
-			// Log error and return
-			fmt.Printf("Error unmarshaling response: %v\n", err)
-			return
-		}
-
-		// Send the response to the channel
-		respChan <- &m
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to subscribe to response topic: %w", err)
-	}
-	defer sub.Unsubscribe()
-
-	// Publish the request
-	if err := b.Publish(ctx, req); err != nil {
-		return nil, fmt.Errorf("failed to publish request: %w", err)
-	}
-
-	// Wait for the response or timeout
-	timeout := time.NewTimer(time.Duration(timeoutMs) * time.Millisecond)
-	defer timeout.Stop()
-
+	// Check if context is canceled
 	select {
-	case resp := <-respChan:
-		return resp, nil
-	case <-timeout.C:
-		return nil, context.DeadlineExceeded
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	default:
 	}
+
+	// Use NATS built-in request-reply pattern
+	// This avoids the need to manage subscriptions manually
+	msg := nats.NewMsg(req.Header.Topic)
+
+	// Marshal the request message
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	msg.Data = data
+
+	// Set timeout
+	timeout := time.Duration(timeoutMs) * time.Millisecond
+
+	// Create a context with timeout
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// Send the request and wait for a response
+	resp, err := b.conn.RequestMsgWithContext(reqCtx, msg)
+	if err != nil {
+		if err == nats.ErrTimeout {
+			return nil, context.DeadlineExceeded
+		}
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+
+	// Unmarshal the response
+	var respMsg model.Message
+	if err := json.Unmarshal(resp.Data, &respMsg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &respMsg, nil
 }
 
 // Close closes the NATS connection and cleans up resources.

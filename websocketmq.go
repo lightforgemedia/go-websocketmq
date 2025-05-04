@@ -106,7 +106,11 @@ func NewNATSBroker(logger Logger, opts NATSBrokerOptions) (broker.Broker, error)
 // NewHandler creates a new WebSocket handler that upgrades HTTP connections to WebSocket
 // and handles message routing through the provided broker.
 func NewHandler(b broker.Broker, logger Logger, opts HandlerOptions) http.Handler {
-	return server.New(b)
+	serverOpts := server.Options{
+		MaxMessageSize: opts.MaxMessageSize,
+		AllowedOrigins: opts.AllowedOrigins,
+	}
+	return server.New(b, serverOpts)
 }
 
 // Message is a convenience type alias for model.Message
