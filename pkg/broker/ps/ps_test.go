@@ -36,7 +36,7 @@ func TestPubSubBroker_Publish(t *testing.T) {
 		ctx := context.Background()
 
 		// Create a test message
-		msg := model.NewEvent("test.topic", map[string]interface{}{
+		msg := model.NewEvent("test.topic", map[string]any{
 			"key": "value",
 		})
 
@@ -68,16 +68,18 @@ func TestPubSubBroker_Publish(t *testing.T) {
 		cancel() // Cancel the context
 
 		// Create a test message
-		msg := model.NewEvent("test.topic", map[string]interface{}{
+		msg := model.NewEvent("test.topic", map[string]any{
 			"key": "value",
 		})
 
 		// Publish the message with canceled context
-		// Note: Our implementation currently ignores the context, but this test
-		// ensures we handle canceled contexts gracefully if that changes
+		// We now expect an error since we check for context cancellation
 		err := broker.Publish(ctx, msg)
-		if err != nil {
-			t.Fatalf("Error publishing message with canceled context: %v", err)
+		if err == nil {
+			t.Fatal("Expected error when publishing with canceled context, got nil")
+		}
+		if err != context.Canceled {
+			t.Fatalf("Expected context.Canceled error, got: %v", err)
 		}
 	})
 }
@@ -103,7 +105,7 @@ func TestPubSubBroker_Subscribe(t *testing.T) {
 		}
 
 		// Create a test message
-		msg := model.NewEvent(topic, map[string]interface{}{
+		msg := model.NewEvent(topic, map[string]any{
 			"key": "value",
 		})
 
@@ -156,7 +158,7 @@ func TestPubSubBroker_Subscribe(t *testing.T) {
 		}
 
 		// Create and publish a message to the first topic
-		msg1 := model.NewEvent(topic1, map[string]interface{}{
+		msg1 := model.NewEvent(topic1, map[string]any{
 			"key": "value1",
 		})
 		err = broker.Publish(ctx, msg1)
@@ -165,7 +167,7 @@ func TestPubSubBroker_Subscribe(t *testing.T) {
 		}
 
 		// Create and publish a message to the second topic
-		msg2 := model.NewEvent(topic2, map[string]interface{}{
+		msg2 := model.NewEvent(topic2, map[string]any{
 			"key": "value2",
 		})
 		err = broker.Publish(ctx, msg2)
@@ -210,7 +212,7 @@ func TestPubSubBroker_Subscribe(t *testing.T) {
 		}
 
 		// Create and publish a message
-		msg := model.NewEvent(topic, map[string]interface{}{
+		msg := model.NewEvent(topic, map[string]any{
 			"key": "value",
 		})
 		err = broker.Publish(ctx, msg)
@@ -244,7 +246,7 @@ func TestPubSubBroker_Request(t *testing.T) {
 					Topic:         m.Header.CorrelationID,
 					Timestamp:     time.Now().UnixMilli(),
 				},
-				Body: map[string]interface{}{
+				Body: map[string]any{
 					"response": "value",
 				},
 			}
@@ -265,7 +267,7 @@ func TestPubSubBroker_Request(t *testing.T) {
 				Timestamp:     time.Now().UnixMilli(),
 				TTL:           1000,
 			},
-			Body: map[string]interface{}{
+			Body: map[string]any{
 				"key": "value",
 			},
 		}
@@ -312,7 +314,7 @@ func TestPubSubBroker_Request(t *testing.T) {
 				Timestamp:     time.Now().UnixMilli(),
 				TTL:           100, // Short timeout
 			},
-			Body: map[string]interface{}{
+			Body: map[string]any{
 				"key": "value",
 			},
 		}
@@ -353,7 +355,7 @@ func TestPubSubBroker_Request(t *testing.T) {
 				Timestamp:     time.Now().UnixMilli(),
 				TTL:           1000,
 			},
-			Body: map[string]interface{}{
+			Body: map[string]any{
 				"key": "value",
 			},
 		}

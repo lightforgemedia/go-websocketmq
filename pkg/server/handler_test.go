@@ -1,14 +1,14 @@
-// pkg/server/handler.go
+// pkg/server/handler_test.go
 package server
 
 import (
 "context"
-"encoding/json"
 "net/http/httptest"
 "strings"
 "testing"
 "time"
 
+"github.com/lightforgemedia/go-websocketmq/pkg/broker"
 "github.com/lightforgemedia/go-websocketmq/pkg/model"
 "nhooyr.io/websocket"
 )
