@@ -1,0 +1,8 @@
+# Go
+*.exe
+
+# Node
+node_modules/
+
+# Build
+/dist/

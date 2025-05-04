@@ -1,0 +1,4 @@
+# ... other ignore rules
+
+# Ignore built JS client output
+client/dist/
