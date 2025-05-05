@@ -4,7 +4,8 @@ package ps
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
+	"sync"
 	"time"
 
 	"github.com/cskr/pubsub"
@@ -12,96 +13,160 @@ import (
 	"github.com/lightforgemedia/go-websocketmq/pkg/model"
 )
 
-type PubSubBroker struct{ bus *pubsub.PubSub }
+// PubSubBroker implements the broker.Broker interface using cskr/pubsub
+type PubSubBroker struct {
+	bus    *pubsub.PubSub
+	logger broker.Logger
+	opts   broker.Options
+	mu     sync.RWMutex
+	subs   map[string]chan interface{}
+}
 
-func New(queueLen int) *PubSubBroker { return &PubSubBroker{bus: pubsub.New(queueLen)} }
-
-func (b *PubSubBroker) Publish(ctx context.Context, m *model.Message) error {
-	// Check if the context is canceled
-	if ctx.Err() != nil {
-		return ctx.Err()
+// New creates a new PubSubBroker with the given options
+func New(logger broker.Logger, opts broker.Options) *PubSubBroker {
+	if logger == nil {
+		panic("logger must not be nil")
 	}
+	
+	return &PubSubBroker{
+		bus:    pubsub.New(opts.QueueLength),
+		logger: logger,
+		opts:   opts,
+		subs:   make(map[string]chan interface{}),
+	}
+}
 
+// Publish sends a message to the specified topic
+func (b *PubSubBroker) Publish(_ context.Context, m *model.Message) error {
 	if m == nil {
-		return errors.New("message cannot be nil")
+		return fmt.Errorf("cannot publish nil message")
 	}
-
-	raw, _ := json.Marshal(m)
+	
+	raw, err := json.Marshal(m)
+	if err != nil {
+		b.logger.Error("Failed to marshal message: %v", err)
+		return err
+	}
+	
+	b.logger.Debug("Publishing to %s: %s", m.Header.Topic, string(raw))
 	b.bus.Pub(raw, m.Header.Topic)
 	return nil
 }
 
+// Subscribe registers a handler for a specific topic
 func (b *PubSubBroker) Subscribe(ctx context.Context, topic string, fn broker.Handler) error {
-	// Check if the context is canceled
-	if ctx.Err() != nil {
-		return ctx.Err()
+	if topic == "" {
+		return fmt.Errorf("topic cannot be empty")
 	}
-
+	
+	if fn == nil {
+		return fmt.Errorf("handler function cannot be nil")
+	}
+	
+	b.logger.Info("Subscribing to topic: %s", topic)
+	
+	b.mu.Lock()
 	ch := b.bus.Sub(topic)
-
-	// Start a goroutine to handle messages
+	b.subs[topic] = ch
+	b.mu.Unlock()
+	
 	go func() {
-		// Ensure we unsubscribe when the context is done
-		defer b.bus.Unsub(ch, topic)
-
-		// Create a done channel from the context
-		done := ctx.Done()
-
 		for {
 			select {
-			case <-done:
-				// Context is canceled, stop processing
+			case <-ctx.Done():
+				b.mu.Lock()
+				b.bus.Unsub(ch, topic)
+				delete(b.subs, topic)
+				b.mu.Unlock()
+				b.logger.Debug("Unsubscribed from topic due to context cancellation: %s", topic)
 				return
+				
 			case raw, ok := <-ch:
 				if !ok {
-					// Channel is closed
+					b.logger.Debug("Channel closed for topic: %s", topic)
 					return
 				}
-
+				
 				var msg model.Message
 				if err := json.Unmarshal(raw.([]byte), &msg); err != nil {
-					// Skip invalid messages
+					b.logger.Error("Failed to unmarshal message: %v", err)
 					continue
 				}
-
-				// Create a new context for the handler
-				handlerCtx, cancel := context.WithCancel(ctx)
-
-				// Call the handler
-				resp, err := fn(handlerCtx, &msg)
-				cancel() // Clean up the handler context
-
-				// If the handler returned a response, publish it
-				if err == nil && resp != nil {
-					// Use a background context for the response to ensure it's sent
-					// even if the original context is canceled
-					_ = b.Publish(context.Background(), resp)
-				}
+				
+				b.logger.Debug("Received message on %s: %v", topic, msg.Body)
+				
+				go func(msg model.Message) {
+					resp, err := fn(ctx, &msg)
+					if err != nil {
+						b.logger.Error("Handler error for topic %s: %v", topic, err)
+						return
+					}
+					
+					if resp != nil {
+						if err := b.Publish(ctx, resp); err != nil {
+							b.logger.Error("Failed to publish response: %v", err)
+						}
+					}
+				}(msg)
 			}
 		}
 	}()
-
+	
 	return nil
 }
 
+// Request sends a request and waits for a response with the given timeout
 func (b *PubSubBroker) Request(ctx context.Context, req *model.Message, timeoutMs int64) (*model.Message, error) {
-	replySub := req.Header.CorrelationID
-	respCh := b.bus.SubOnce(replySub)
-	_ = b.Publish(ctx, req)
+	if req == nil {
+		return nil, fmt.Errorf("request cannot be nil")
+	}
+	
+	if req.Header.CorrelationID == "" {
+		return nil, fmt.Errorf("correlation ID is required for requests")
+	}
+	
+	replyCh := b.bus.SubOnce(req.Header.CorrelationID)
+	
+	if err := b.Publish(ctx, req); err != nil {
+		return nil, fmt.Errorf("failed to publish request: %w", err)
+	}
+	
+	b.logger.Debug("Sent request to %s with correlation ID %s", req.Header.Topic, req.Header.CorrelationID)
+	
+	timeout := time.After(time.Duration(timeoutMs) * time.Millisecond)
+	
 	select {
-	case raw := <-respCh:
-		var m model.Message
-		_ = json.Unmarshal(raw.([]byte), &m)
-		return &m, nil
-	case <-time.After(time.Duration(timeoutMs) * time.Millisecond):
-		return nil, context.DeadlineExceeded
 	case <-ctx.Done():
 		return nil, ctx.Err()
+		
+	case <-timeout:
+		return nil, context.DeadlineExceeded
+		
+	case raw, ok := <-replyCh:
+		if !ok {
+			return nil, fmt.Errorf("reply channel closed unexpectedly")
+		}
+		
+		var resp model.Message
+		if err := json.Unmarshal(raw.([]byte), &resp); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+		}
+		
+		b.logger.Debug("Received response for correlation ID %s", req.Header.CorrelationID)
+		return &resp, nil
 	}
 }
 
-// Close closes the broker and cleans up resources.
+// Close terminates the broker and cleans up resources
 func (b *PubSubBroker) Close() error {
-	b.bus.Shutdown()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	
+	for topic, ch := range b.subs {
+		b.bus.Unsub(ch, topic)
+	}
+	
+	b.subs = make(map[string]chan interface{})
+	b.logger.Info("Broker closed and all subscriptions removed")
 	return nil
 }

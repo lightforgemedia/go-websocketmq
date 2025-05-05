@@ -579,6 +579,8 @@ func browserNavigate(url string) error {
 	if err != nil {
 		return fmt.Errorf("failed to navigate to %s: %w", url, err)
 	}
+	// Wait a bit for the page to load
+	browser_wait_playwright(1 * time.Second)
 	return nil
 }
 
@@ -625,23 +627,39 @@ func executeJavaScript(script string) error {
 		return fmt.Errorf("could not find body element")
 	}
 
-	// Use browser_type_playwright to type the script into the console
-	// This is a workaround since we don't have direct access to evaluate
-	// We'll use the browser's console API to execute the script
+	// Since we don't have a direct evaluate function in the Playwright MCP tools,
+	// we'll use a workaround by adding a script tag to the page
 
 	// Create a script that executes our script and returns the result
 	wrappedScript := fmt.Sprintf(`
 		try {
 			const result = %s;
 			console.log('Script execution result:', result);
+			// Add a hidden element to indicate success
+			const successEl = document.createElement('div');
+			successEl.id = 'script-executed';
+			successEl.style.display = 'none';
+			document.body.appendChild(successEl);
 		} catch (error) {
 			console.error('Script execution error:', error);
+			// Add a hidden element to indicate failure
+			const errorEl = document.createElement('div');
+			errorEl.id = 'script-error';
+			errorEl.textContent = error.message;
+			errorEl.style.display = 'none';
+			document.body.appendChild(errorEl);
 		}
 	`, script)
 
-	// Execute the script by typing it into the browser's console
-	// This is just a simulation since we can't directly execute scripts
-	// In a real implementation, we would use a proper evaluate function
+	// Use browser console messages to see the output
+	messages, err := browser_console_messages_playwright()
+	if err != nil {
+		fmt.Printf("Warning: failed to get console messages: %v\n", err)
+	} else {
+		for _, msg := range messages {
+			fmt.Printf("Console: %s\n", msg)
+		}
+	}
 
 	// Wait a bit to ensure the script has time to execute
 	browser_wait_playwright(time.Second)

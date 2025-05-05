@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocketMQ Dev Server</title>
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        .card {
+            background: #f9f9f9;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        pre {
+            background: #f0f0f0;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        input {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 250px;
+            margin-right: 10px;
+        }
+        #connection-status {
+            font-weight: bold;
+        }
+        .connected {
+            color: #4CAF50;
+        }
+        .disconnected {
+            color: #f44336;
+        }
+        #messages {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 10px;
+            margin-top: 15px;
+        }
+        .message {
+            margin-bottom: 8px;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .server-message {
+            background-color: #e3f2fd;
+        }
+        .client-message {
+            background-color: #e8f5e9;
+        }
+        .request-message {
+            background-color: #fff3e0;
+        }
+        .response-message {
+            background-color: #f3e5f5;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebSocketMQ Development Server</h1>
+    
+    <div class="card">
+        <h2>Hot Reload Demo 4</h2>
+        <p>This page will automatically reload when you edit and save files in the static or templates directories.</p>
+        <p>Current time: <span id="time"></span></p>
+        <div class="hot-reload-test">
+            This element will appear after the hot reload! Version: 3
+            <div>HOT RELOAD WORKS!</div>
+            <button onclick="generateError()">Test JS Error Reporting</button>
+            <button onclick="generatePromiseError()">Test Unhandled Promise Rejection</button>
+        </div>
+    </div>
+    
+    <div class="card">
+        <h2>Connection</h2>
+        <p>Status: <span id="connection-status" class="disconnected">Disconnected</span></p>
+        <button id="connect-btn">Connect</button>
+        <button id="disconnect-btn">Disconnect</button>
+    </div>
+
+    <div class="card">
+        <h2>Publish Message</h2>
+        <div>
+            <input type="text" id="publish-topic" placeholder="Topic (e.g. client.message)" value="client.message">
+            <input type="text" id="publish-message" placeholder="Message content" value="Hello from browser!">
+            <button id="publish-btn">Publish</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Request-Response</h2>
+        <div>
+            <input type="text" id="request-topic" placeholder="Topic (e.g. server.echo)" value="server.echo">
+            <input type="text" id="request-message" placeholder="Request content" value="Echo this message">
+            <button id="request-btn">Send Request</button>
+        </div>
+    </div>
+    
+    <div class="card">
+        <h2>Test Server-to-Client Request</h2>
+        <div>
+            <select id="operation-select">
+                <option value="add">Addition</option>
+                <option value="subtract">Subtraction</option>
+                <option value="multiply">Multiplication</option>
+                <option value="divide">Division</option>
+            </select>
+            <input type="number" id="operand-a" placeholder="First number" value="5">
+            <input type="number" id="operand-b" placeholder="Second number" value="3">
+            <button id="trigger-server-request">Trigger Server Request</button>
+            <p>This will publish a message that the server can respond to with a manual request to the client.</p>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Message Log</h2>
+        <div id="messages"></div>
+    </div>
+
+    <script src="/wsmq/websocketmq.js"></script>
+    <script>
+        // Update current time
+        function updateTime() {
+            document.getElementById('time').textContent = new Date().toLocaleTimeString();
+        }
+        setInterval(updateTime, 1000);
+        updateTime();
+
+        // Elements
+        const connectionStatus = document.getElementById('connection-status');
+        const connectBtn = document.getElementById('connect-btn');
+        const disconnectBtn = document.getElementById('disconnect-btn');
+        const publishTopicInput = document.getElementById('publish-topic');
+        const publishMessageInput = document.getElementById('publish-message');
+        const publishBtn = document.getElementById('publish-btn');
+        const requestTopicInput = document.getElementById('request-topic');
+        const requestMessageInput = document.getElementById('request-message');
+        const requestBtn = document.getElementById('request-btn');
+        const operationSelect = document.getElementById('operation-select');
+        const operandA = document.getElementById('operand-a');
+        const operandB = document.getElementById('operand-b');
+        const triggerServerRequestBtn = document.getElementById('trigger-server-request');
+        const messagesContainer = document.getElementById('messages');
+        
+        // Create WebSocketMQ client
+        const client = new WebSocketMQ.Client({
+            url: `ws://${window.location.host}/ws`,
+            reconnect: true,
+            devMode: true  // Enable hot-reload and JS error reporting
+        });
+
+        // Helper to add messages to the log
+        function addMessage(type, title, content) {
+            const messageEl = document.createElement('div');
+            messageEl.className = `message ${type}-message`;
+            
+            const titleEl = document.createElement('strong');
+            titleEl.textContent = title;
+            
+            const contentEl = document.createElement('pre');
+            if (typeof content === 'object') {
+                contentEl.textContent = JSON.stringify(content, null, 2);
+            } else {
+                contentEl.textContent = content;
+            }
+            
+            messageEl.appendChild(titleEl);
+            messageEl.appendChild(document.createElement('br'));
+            messageEl.appendChild(contentEl);
+            
+            messagesContainer.appendChild(messageEl);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        // Connection button handlers
+        connectBtn.addEventListener('click', () => {
+            client.connect();
+        });
+
+        disconnectBtn.addEventListener('click', () => {
+            client.disconnect();
+        });
+
+        // Publish button handler
+        publishBtn.addEventListener('click', () => {
+            const topic = publishTopicInput.value.trim();
+            const message = publishMessageInput.value.trim();
+            
+            if (topic && message) {
+                client.publish(topic, { text: message, timestamp: new Date().toISOString() });
+                addMessage('client', `Published to ${topic}:`, { text: message });
+            }
+        });
+
+        // Request button handler
+        requestBtn.addEventListener('click', () => {
+            const topic = requestTopicInput.value.trim();
+            const message = requestMessageInput.value.trim();
+            
+            if (topic && message) {
+                addMessage('request', `Request to ${topic}:`, { text: message });
+                
+                client.request(topic, { text: message, timestamp: new Date().toISOString() }, 5000)
+                    .then(response => {
+                        addMessage('response', `Response from ${topic}:`, response);
+                    })
+                    .catch(err => {
+                        addMessage('response', `Request failed:`, err.message);
+                    });
+            }
+        });
+        
+        // Trigger server request button handler
+        triggerServerRequestBtn.addEventListener('click', () => {
+            // Get the values from the form
+            const operation = operationSelect.value;
+            const a = parseFloat(operandA.value);
+            const b = parseFloat(operandB.value);
+            
+            if (isNaN(a) || isNaN(b)) {
+                addMessage('client', 'Invalid inputs:', 'Please enter valid numbers');
+                return;
+            }
+            
+            // Publish a message to a special topic that the server will use to trigger a request
+            addMessage('client', 'Triggering server request to client:', {
+                operation,
+                a,
+                b
+            });
+            
+            // Send a message to a special topic that the server is listening to
+            client.publish('trigger.server.request', {
+                operation,
+                a,
+                b,
+                timestamp: new Date().toISOString()
+            });
+        });
+
+        // Set up client event handlers
+        client.onConnect(() => {
+            connectionStatus.textContent = 'Connected';
+            connectionStatus.className = 'connected';
+            addMessage('server', 'Connection established', 'Connected to WebSocketMQ server');
+            
+            // Subscribe to server ticks
+            client.subscribe('server.tick', (body) => {
+                addMessage('server', 'Received server tick:', body);
+            });
+            
+            // Handle calculation requests from the server
+            client.subscribe('client.calculate', (body, message) => {
+                console.log('Received calculation request from server:', body);
+                console.log('Full message:', message);
+                
+                addMessage('server', 'Received calculation request:', body);
+                
+                // Perform the calculation
+                let result;
+                if (body.operation === 'add') {
+                    result = body.a + body.b;
+                } else if (body.operation === 'multiply') {
+                    result = body.a * body.b;
+                } else if (body.operation === 'subtract') {
+                    result = body.a - body.b;
+                } else if (body.operation === 'divide') {
+                    result = body.a / body.b;
+                } else {
+                    result = 'Unknown operation';
+                }
+                
+                // Log what we're about to return
+                const responseData = {
+                    operation: body.operation, 
+                    a: body.a, 
+                    b: body.b,
+                    result: result
+                };
+                
+                console.log('Sending calculation response:', responseData);
+                console.log('CorrelationID:', message.header.correlationID);
+                
+                addMessage('client', 'Sending calculation response:', responseData);
+                
+                // Return the result (this will be sent back to the server)
+                return responseData;
+            });
+        });
+
+        client.onDisconnect(() => {
+            connectionStatus.textContent = 'Disconnected';
+            connectionStatus.className = 'disconnected';
+            addMessage('server', 'Connection closed', 'Disconnected from WebSocketMQ server');
+        });
+
+        client.onError((err) => {
+            addMessage('server', 'Error:', err.message || 'Unknown error');
+        });
+
+        // Generate a JavaScript error for testing
+        window.generateError = function() {
+            try {
+                // This will throw an error
+                nonExistentFunction();
+            } catch (err) {
+                console.error("Error was caught and reported to server:", err);
+                
+                // Manually publish the error to the server
+                if (client.isConnected) {
+                    client.publish('_dev.js-error', {
+                        message: err.message,
+                        stack: err.stack,
+                        timestamp: new Date().toISOString(),
+                        type: 'manual-test-error'
+                    });
+                    
+                    // Add to the message log
+                    addMessage('server', 'Error sent to server:', {
+                        message: err.message,
+                        stack: err.stack
+                    });
+                } else {
+                    console.warn("Cannot report error: WebSocket not connected");
+                }
+            }
+        };
+
+        // Throw an unhandled promise rejection for testing
+        window.generatePromiseError = function() {
+            // This will create an unhandled rejection
+            const promise = new Promise((resolve, reject) => {
+                reject(new Error("This is an unhandled promise rejection"));
+            });
+            
+            // Manually publish the error to the server
+            if (client.isConnected) {
+                setTimeout(() => {
+                    client.publish('_dev.js-error', {
+                        message: "Unhandled Promise Rejection Test",
+                        detail: "This is a manually triggered unhandled promise rejection",
+                        timestamp: new Date().toISOString(),
+                        type: 'manual-promise-rejection-test'
+                    });
+                    
+                    // Add to the message log
+                    addMessage('server', 'Promise Rejection sent to server:', {
+                        message: "Unhandled Promise Rejection Test",
+                        detail: "This is a manually triggered unhandled promise rejection"
+                    });
+                }, 100);
+            } else {
+                console.warn("Cannot report error: WebSocket not connected");
+            }
+            
+            return promise;
+        };
+
+        // Initial connect
+        client.connect();
+    </script>
+</body>
+</html>

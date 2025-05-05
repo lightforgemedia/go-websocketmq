@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocketMQ Browser Test</title>
+</head>
+<body>
+    <h1>WebSocketMQ Browser Test</h1>
+    
+    <div id="status">Disconnected</div>
+    <div id="messages"></div>
+    
+    <script src="/wsmq/websocketmq.min.js"></script>
+    <script>
+        // Create a global client instance
+        window.client = new WebSocketMQ.Client({
+            url: 'ws://' + window.location.host + '/ws',
+            reconnect: true,
+            reconnectInterval: 1000,
+            maxReconnectInterval: 30000,
+            reconnectMultiplier: 1.5,
+            devMode: false
+        });
+        
+        // Set up event handlers
+        client.onConnect(() => {
+            document.getElementById('status').textContent = 'Connected';
+            console.log('Connected to server');
+        });
+        
+        client.onDisconnect(() => {
+            document.getElementById('status').textContent = 'Disconnected';
+            console.log('Disconnected from server');
+        });
+        
+        client.onError((err) => {
+            console.error('WebSocket error:', err);
+        });
+        
+        // Function to add a message to the messages div
+        window.addMessage = function(message) {
+            const messagesDiv = document.getElementById('messages');
+            const messageElement = document.createElement('div');
+            messageElement.textContent = message;
+            messagesDiv.appendChild(messageElement);
+        };
+        
+        // Function to clear messages
+        window.clearMessages = function() {
+            document.getElementById('messages').innerHTML = '';
+        };
+        
+        // Function to publish a message
+        window.publishMessage = function(topic, body) {
+            client.publish(topic, body);
+            console.log('Published message to topic:', topic, body);
+        };
+        
+        // Function to subscribe to a topic
+        window.subscribeToTopic = function(topic, callback) {
+            return client.subscribe(topic, (body, message) => {
+                console.log('Received message on topic:', topic, body);
+                if (callback) {
+                    callback(body, message);
+                }
+            });
+        };
+        
+        // Function to make a request
+        window.makeRequest = function(topic, body, timeout) {
+            return client.request(topic, body, timeout)
+                .then(response => {
+                    console.log('Received response:', response);
+                    return response;
+                })
+                .catch(err => {
+                    console.error('Request error:', err);
+                    throw err;
+                });
+        };
+        
+        // Connect to the server
+        client.connect();
+    </script>
+</body>
+</html>

@@ -1,8 +1,9 @@
-// Package devwatch provides file watching functionality for development hot-reload.
+// internal/devwatch/watcher.go
 package devwatch
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -12,159 +13,181 @@ import (
 	"github.com/lightforgemedia/go-websocketmq/pkg/model"
 )
 
-// Logger defines the interface for logging within the devwatch package.
-type Logger interface {
-	Debug(msg string, args ...interface{})
-	Info(msg string, args ...interface{})
-	Warn(msg string, args ...interface{})
-	Error(msg string, args ...interface{})
+// WatchOptions configures the file watcher
+type WatchOptions struct {
+	Paths       []string        // Paths to watch
+	Extensions  []string        // File extensions to watch
+	ExcludeDirs []string        // Directories to exclude
+	Debounce    time.Duration   // Debounce duration to prevent multiple events
 }
 
-// Options contains configuration options for the file watcher.
-type Options struct {
-	// Paths is a list of file paths or directories to watch for changes.
-	Paths []string
-
-	// Extensions is a list of file extensions to watch for changes.
-	// If empty, all files are watched.
-	Extensions []string
-
-	// IgnorePaths is a list of paths to ignore.
-	IgnorePaths []string
+// DefaultWatchOptions returns default options for development watcher
+func DefaultWatchOptions() WatchOptions {
+	return WatchOptions{
+		Paths:       []string{"."},
+		Extensions:  []string{".go", ".js", ".html", ".css"},
+		ExcludeDirs: []string{".git", "node_modules", "vendor", "dist"},
+		Debounce:    300 * time.Millisecond,
+	}
 }
 
-// Watcher watches files for changes and publishes events to a broker.
-type Watcher struct {
-	broker  broker.Broker
-	watcher *fsnotify.Watcher
-	logger  Logger
-	options Options
-	done    chan struct{}
-}
-
-// New creates a new file watcher.
-func New(b broker.Broker, logger Logger, options Options) (*Watcher, error) {
-	fsWatcher, err := fsnotify.NewWatcher()
+// StartWatcher starts a file watcher that publishes hot-reload events
+func StartWatcher(ctx context.Context, b broker.Broker, logger broker.Logger, opts WatchOptions) (func() error, error) {
+	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
 	}
 
-	return &Watcher{
-		broker:  b,
-		watcher: fsWatcher,
-		logger:  logger,
-		options: options,
-		done:    make(chan struct{}),
-	}, nil
-}
-
-// Start starts watching files for changes.
-func (w *Watcher) Start(ctx context.Context) error {
-	// Add paths to watcher
-	for _, path := range w.options.Paths {
-		if err := w.watcher.Add(path); err != nil {
-			w.logger.Error("Error adding path to watcher: %v", err)
+	// Recursively add all directories to the watcher
+	for _, path := range opts.Paths {
+		if err := addDirsToWatcher(watcher, path, opts.ExcludeDirs); err != nil {
+			watcher.Close()
+			return nil, err
 		}
 	}
 
-	// Start watching for events
-	go w.watch(ctx)
+	// The topic for hot reload events
+	const hotReloadTopic = "_dev.hotreload"
+
+	// Start the watcher goroutine
+	go func() {
+		// Create a timer for debouncing
+		var debounceTimer *time.Timer
+		var pendingReload bool
+
+		// Context done channel
+		done := ctx.Done()
+
+		for {
+			select {
+			case <-done:
+				watcher.Close()
+				return
+
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+
+				// Check if this is a relevant event (create, write, rename, but not chmod)
+				if event.Has(fsnotify.Create) || event.Has(fsnotify.Write) || event.Has(fsnotify.Rename) {
+					// Check if this file has a relevant extension
+					ext := strings.ToLower(filepath.Ext(event.Name))
+					isRelevant := false
+					for _, watchExt := range opts.Extensions {
+						if ext == watchExt {
+							isRelevant = true
+							break
+						}
+					}
+
+					if isRelevant {
+						// If this is a create event on a directory, add it to the watcher
+						if event.Has(fsnotify.Create) {
+							isDir, _ := isDirectory(event.Name)
+							if isDir {
+								addDirsToWatcher(watcher, event.Name, opts.ExcludeDirs)
+							}
+						}
+
+						// Debounce the hot-reload event
+						if debounceTimer == nil {
+							debounceTimer = time.AfterFunc(opts.Debounce, func() {
+								if pendingReload {
+									// Create a hot-reload message
+									msg := model.NewEvent(hotReloadTopic, map[string]interface{}{
+										"file":      event.Name,
+										"timestamp": time.Now().UnixMilli(),
+									})
+
+									// Publish the hot-reload message
+									if err := b.Publish(ctx, msg); err != nil {
+										logger.Error("Failed to publish hot-reload event: %v", err)
+									} else {
+										logger.Info("Published hot-reload event for %s", event.Name)
+									}
+
+									pendingReload = false
+								}
+							})
+						} else {
+							debounceTimer.Reset(opts.Debounce)
+						}
+						pendingReload = true
+					}
+				}
+
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				logger.Error("Watcher error: %v", err)
+			}
+		}
+	}()
+
+	// Return a function to close the watcher
+	return watcher.Close, nil
+}
+
+// addDirsToWatcher recursively adds directories to the watcher
+func addDirsToWatcher(watcher *fsnotify.Watcher, path string, excludeDirs []string) error {
+	// Process the initial path
+	isDir, err := isDirectory(path)
+	if err != nil {
+		return err
+	}
+
+	if !isDir {
+		// If it's a file, add its parent directory
+		return watcher.Add(filepath.Dir(path))
+	}
+
+	// Walk the directory tree
+	entries, err := filepath.Glob(filepath.Join(path, "*"))
+	if err != nil {
+		return err
+	}
+
+	// Add the root directory
+	if err := watcher.Add(path); err != nil {
+		return err
+	}
+
+	// Process subdirectories
+	for _, entry := range entries {
+		isDir, err := isDirectory(entry)
+		if err != nil {
+			continue
+		}
+
+		if isDir {
+			// Skip excluded directories
+			baseName := filepath.Base(entry)
+			skip := false
+			for _, exclude := range excludeDirs {
+				if baseName == exclude {
+					skip = true
+					break
+				}
+			}
+
+			if !skip {
+				if err := addDirsToWatcher(watcher, entry, excludeDirs); err != nil {
+					return err
+				}
+			}
+		}
+	}
 
 	return nil
 }
 
-// Stop stops watching files for changes.
-func (w *Watcher) Stop() {
-	close(w.done)
-	w.watcher.Close()
-}
-
-// watch watches for file changes and publishes events to the broker.
-func (w *Watcher) watch(ctx context.Context) {
-	// Debounce events to prevent multiple events for the same file
-	debounceTime := 100 * time.Millisecond
-	debounceTimer := time.NewTimer(debounceTime)
-	debounceTimer.Stop()
-	var lastEvent fsnotify.Event
-
-	for {
-		select {
-		case <-ctx.Done():
-			w.Stop()
-			return
-		case <-w.done:
-			return
-		case event, ok := <-w.watcher.Events:
-			if !ok {
-				return
-			}
-
-			// Check if the file should be ignored
-			if w.shouldIgnore(event.Name) {
-				continue
-			}
-
-			// Check if the file has a watched extension
-			if !w.hasWatchedExtension(event.Name) {
-				continue
-			}
-
-			// Debounce events
-			lastEvent = event
-			debounceTimer.Reset(debounceTime)
-
-		case err, ok := <-w.watcher.Errors:
-			if !ok {
-				return
-			}
-			w.logger.Error("Watcher error: %v", err)
-
-		case <-debounceTimer.C:
-			// Publish event to broker
-			w.publishEvent(ctx, lastEvent)
-		}
+// isDirectory checks if a path is a directory
+func isDirectory(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, err
 	}
-}
-
-// shouldIgnore returns true if the file should be ignored.
-func (w *Watcher) shouldIgnore(path string) bool {
-	for _, ignorePath := range w.options.IgnorePaths {
-		if strings.Contains(path, ignorePath) {
-			return true
-		}
-	}
-	return false
-}
-
-// hasWatchedExtension returns true if the file has a watched extension.
-func (w *Watcher) hasWatchedExtension(path string) bool {
-	// If no extensions are specified, watch all files
-	if len(w.options.Extensions) == 0 {
-		return true
-	}
-
-	ext := filepath.Ext(path)
-	for _, watchExt := range w.options.Extensions {
-		if ext == watchExt {
-			return true
-		}
-	}
-	return false
-}
-
-// publishEvent publishes a file change event to the broker.
-func (w *Watcher) publishEvent(ctx context.Context, event fsnotify.Event) {
-	// Create event message
-	msg := model.NewEvent("_dev.hotreload", map[string]interface{}{
-		"path":      event.Name,
-		"operation": event.Op.String(),
-		"timestamp": time.Now().UnixMilli(),
-	})
-
-	// Publish to broker
-	if err := w.broker.Publish(ctx, msg); err != nil {
-		w.logger.Error("Error publishing hot-reload event: %v", err)
-	} else {
-		w.logger.Info("Published hot-reload event for %s", event.Name)
-	}
+	return info.IsDir(), nil
 }
