@@ -1,4 +1,7 @@
-// pkg/server/handler.go
+// Package server provides the WebSocket server implementation for WebSocketMQ.
+//
+// This package handles the WebSocket connection lifecycle, message parsing,
+// and integration with the broker for message routing.
 package server
 
 import (
@@ -14,25 +17,53 @@ import (
 	"nhooyr.io/websocket"
 )
 
-// HandlerOptions configures the WebSocket handler
+// HandlerOptions configures the behavior of the WebSocket handler.
 type HandlerOptions struct {
-	MaxMessageSize int64        // Maximum message size in bytes
-	AllowedOrigins []string     // List of allowed origins, empty means any origin
-	WriteTimeout   time.Duration // Timeout for write operations
-	ReadTimeout    time.Duration // Timeout for read operations
+	// MaxMessageSize limits the size of incoming messages in bytes.
+	// Messages larger than this will be rejected.
+	MaxMessageSize int64
+
+	// AllowedOrigins restricts WebSocket connections to specific origins.
+	// An empty list allows connections from any origin.
+	// Example: []string{"https://example.com", "https://*.example.org"}
+	AllowedOrigins []string
+
+	// WriteTimeout is the maximum time allowed for write operations.
+	// If a write takes longer than this, it will be canceled.
+	WriteTimeout time.Duration
+
+	// ReadTimeout is the maximum time allowed for read operations.
+	// This affects how long the server will wait for the next message.
+	ReadTimeout time.Duration
+
+	// PingInterval is how often the server sends ping frames to clients
+	// to keep the connection alive.
+	PingInterval time.Duration
 }
 
-// DefaultHandlerOptions returns the default options for the handler
+// DefaultHandlerOptions returns the default configuration options for the WebSocket handler.
+//
+// Default values:
+//   - MaxMessageSize: 1MB (1048576 bytes)
+//   - AllowedOrigins: nil (any origin)
+//   - WriteTimeout: 10 seconds
+//   - ReadTimeout: 60 seconds
+//   - PingInterval: 30 seconds
 func DefaultHandlerOptions() HandlerOptions {
 	return HandlerOptions{
 		MaxMessageSize: 1024 * 1024, // 1MB
 		AllowedOrigins: nil,         // Any origin
 		WriteTimeout:   10 * time.Second,
 		ReadTimeout:    60 * time.Second,
+		PingInterval:   30 * time.Second,
 	}
 }
 
-// Handler implements http.Handler for WebSocket connections
+// Handler implements http.Handler for WebSocket connections.
+//
+// The Handler manages WebSocket connections and integrates with the broker
+// to route messages between connected clients. It handles connection lifecycle,
+// message parsing, subscription management, and error handling.
 type Handler struct {
 	broker broker.Broker
 	logger broker.Logger
@@ -43,7 +74,25 @@ type Handler struct {
 	conns map[*websocket.Conn]bool
 }
 
-// NewHandler creates a new WebSocket handler
+// NewHandler creates a new WebSocket handler with the specified broker and options.
+//
+// Parameters:
+//   - b: The broker to use for message routing
+//   - logger: Logger for diagnostic messages
+//   - opts: Configuration options for the handler
+//
+// Returns a new Handler instance.
+//
+// Example:
+//
+//	// Create a handler with default options
+//	handler := server.NewHandler(broker, logger, server.DefaultHandlerOptions())
+//
+//	// Create a handler with custom options
+//	opts := server.DefaultHandlerOptions()
+//	opts.MaxMessageSize = 512 * 1024 // 512KB
+//	opts.AllowedOrigins = []string{"https://example.com"}
+//	handler := server.NewHandler(broker, logger, opts)
 func NewHandler(b broker.Broker, logger broker.Logger, opts HandlerOptions) *Handler {
 	if logger == nil {
 		panic("logger must not be nil")
@@ -60,7 +109,10 @@ func NewHandler(b broker.Broker, logger broker.Logger, opts HandlerOptions) *Han
 	}
 }
 
-// ServeHTTP implements http.Handler
+// ServeHTTP implements http.Handler for WebSocket connections.
+//
+// This method handles the WebSocket upgrade process and initializes the
+// connection. It sets up message handling and manages the connection lifecycle.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Configure WebSocket accept options
 	acceptOptions := &websocket.AcceptOptions{
@@ -78,6 +130,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		conn.SetReadLimit(h.opts.MaxMessageSize)
 	}
 
+	// Track the connection
 	h.mu.Lock()
 	h.conns[conn] = true
 	h.mu.Unlock()
@@ -100,7 +153,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info("WebSocket client disconnected: %s", r.RemoteAddr)
 }
 
-// handleMessages reads and processes messages from the WebSocket connection
+// handleMessages reads and processes messages from the WebSocket connection.
+//
+// This method handles the various message types (events, requests, subscriptions)
+// and routes them appropriately through the broker.
 func (h *Handler) handleMessages(ctx context.Context, conn *websocket.Conn) {
 	// Generate a unique client ID for this connection
 	clientID := fmt.Sprintf("client-%d", time.Now().UnixNano())
@@ -194,7 +250,16 @@ func (h *Handler) handleMessages(ctx context.Context, conn *websocket.Conn) {
 	}
 }
 
-// sendMessageToClient sends a message to a specific WebSocket client
+// sendMessageToClient sends a message to a specific WebSocket client.
+//
+// This method handles JSON serialization and connection writing with appropriate timeouts.
+//
+// Parameters:
+//   - ctx: Context for cancellation
+//   - conn: The WebSocket connection to send to
+//   - msg: The message to send
+//
+// Returns an error if serialization or sending fails.
 func (h *Handler) sendMessageToClient(ctx context.Context, conn *websocket.Conn, msg *model.Message) error {
 	// Marshal the message to JSON
 	data, err := json.Marshal(msg)
@@ -214,7 +279,31 @@ func (h *Handler) sendMessageToClient(ctx context.Context, conn *websocket.Conn,
 	return nil
 }
 
-// Close closes all WebSocket connections
+// Close closes all WebSocket connections and cleans up resources.
+//
+// This should be called when shutting down the server to ensure
+// all connections are properly closed.
+//
+// Returns an error if the shutdown process fails.
+//
+// Example:
+//
+//	// Graceful shutdown
+//	server := &http.Server{
+//	    Handler: mux,
+//	    Addr:    ":8080",
+//	}
+//
+//	// Shutdown on signal
+//	go func() {
+//	    <-ctx.Done() // Wait for termination signal
+//	    
+//	    // Close the WebSocket handler
+//	    handler.Close()
+//	    
+//	    // Shutdown the HTTP server
+//	    server.Shutdown(context.Background())
+//	}()
 func (h *Handler) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
