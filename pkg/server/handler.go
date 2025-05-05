@@ -95,11 +95,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	// Start the reader goroutine
-	go h.reader(ctx, ws)
+	// Handle the connection directly in this goroutine
+	// This ensures that the WebSocket connection is properly managed
+	h.handleConnection(ctx, ws)
 }
 
-func (h *Handler) reader(ctx context.Context, ws *websocket.Conn) {
+func (h *Handler) handleConnection(ctx context.Context, ws *websocket.Conn) {
 	// Create a map to track subscriptions for this connection
 	subscriptions := make(map[string]context.CancelFunc)
 
