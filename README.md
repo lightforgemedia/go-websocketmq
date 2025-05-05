@@ -3,7 +3,7 @@
 Lightweight, embeddable **WebSocket message‑queue** for Go web apps.
 
 * **Single static binary** – pure‑Go back‑end, no external broker required.
-* **Pluggable broker** – default in‑memory fan‑out powered by [`cskr/pubsub`].  Replace with NATS/Redis later via the `Broker` interface.
+* **Pluggable broker** – default in‑memory fan‑out powered by [`cskr/pubsub`]. Replace with NATS later via the `Broker` interface.
 * **Tiny JS client** – `< 10 kB` min‑gzip, universal `<script>` drop‑in.
 * **Dev hot‑reload** – built‑in file watcher publishes `_dev.hotreload`, causing connected browsers to reload and funnel JS errors back to the Go log.
 
@@ -74,8 +74,8 @@ func main() {
     })
     
     // Start the server
-    logger.Info("Server starting on :8080")
-    log.Fatal(http.ListenAndServe(":8080", mux))
+    logger.Info("Server starting on :3000")
+    log.Fatal(http.ListenAndServe(":3000", mux))
 }
 ```
 
@@ -135,120 +135,6 @@ func main() {
 </html>
 ```
 
-## API Reference
-
-### Go API
-
-#### Broker
-
-```go
-// Create an in-memory broker
-brokerOpts := websocketmq.DefaultBrokerOptions()
-broker := websocketmq.NewPubSubBroker(logger, brokerOpts)
-
-// Create a NATS broker
-natsOpts := websocketmq.DefaultNATSBrokerOptions()
-broker, err := websocketmq.NewNATSBroker(logger, natsOpts)
-
-// Publish a message
-msg := websocketmq.NewEvent("topic.name", map[string]any{
-    "key": "value",
-})
-broker.Publish(context.Background(), msg)
-
-// Subscribe to a topic
-broker.Subscribe(context.Background(), "topic.name", func(ctx context.Context, m *websocketmq.Message) (*websocketmq.Message, error) {
-    // Handle message
-    return nil, nil
-})
-
-// Make a request
-response, err := broker.Request(context.Background(), requestMsg, 5000)
-```
-
-#### WebSocket Handler
-
-```go
-// Create a WebSocket handler with security options
-handlerOpts := websocketmq.DefaultHandlerOptions()
-handlerOpts.MaxMessageSize = 1024 * 1024 // 1MB limit
-handlerOpts.AllowedOrigins = []string{"https://example.com"} // Restrict to specific origins
-handler := websocketmq.NewHandler(broker, logger, handlerOpts)
-
-// Mount the handler
-mux.Handle("/ws", handler)
-```
-
-#### JavaScript Client Handler
-
-```go
-// Serve the JavaScript client
-mux.Handle("/wsmq/", http.StripPrefix("/wsmq/", websocketmq.ScriptHandler()))
-```
-
-#### Development Watcher
-
-```go
-// Start development watcher
-watchOpts := websocketmq.DefaultDevWatchOptions()
-stopWatcher, err := websocketmq.StartDevWatcher(context.Background(), broker, logger, watchOpts)
-if err != nil {
-    // Handle error
-}
-defer stopWatcher()
-```
-
-### JavaScript API
-
-#### Client
-
-```javascript
-// Create a client
-const client = new WebSocketMQ.Client({
-    url: 'ws://localhost:8080/ws',
-    reconnect: true,
-    reconnectInterval: 1000,
-    maxReconnectInterval: 30000,
-    reconnectMultiplier: 1.5,
-    devMode: false
-});
-
-// Connect
-client.connect();
-
-// Disconnect
-client.disconnect();
-
-// Event handlers
-client.onConnect(callback);
-client.onDisconnect(callback);
-client.onError(callback);
-```
-
-#### Messaging
-
-```javascript
-// Publish a message
-client.publish('topic.name', { key: 'value' });
-
-// Subscribe to a topic
-const unsubscribe = client.subscribe('topic.name', (body, message) => {
-    // Handle message
-});
-
-// Unsubscribe
-unsubscribe();
-
-// Make a request
-client.request('topic.name', { key: 'value' }, 5000)
-    .then(response => {
-        // Handle response
-    })
-    .catch(err => {
-        // Handle error
-    });
-```
-
 ## Development Mode
 
 WebSocketMQ includes built-in development features to improve the developer experience:
@@ -268,55 +154,29 @@ stopWatcher, err := websocketmq.StartDevWatcher(context.Background(), broker, lo
 2. Client-side:
 ```javascript
 const client = new WebSocketMQ.Client({
-    url: 'ws://localhost:8080/ws',
+    url: 'ws://localhost:3000/ws',
     devMode: true
 });
 ```
 
-## Broker Implementations
+## Development Server
 
-WebSocketMQ supports multiple broker implementations:
+For quick development, use the built-in dev server:
 
-### In-Memory Broker
-
-The default in-memory broker uses the `cskr/pubsub` package for message routing. It's suitable for single-server deployments and doesn't require any external dependencies.
-
-```go
-brokerOpts := websocketmq.DefaultBrokerOptions()
-broker := websocketmq.NewPubSubBroker(logger, brokerOpts)
+```bash
+go run ./cmd/devserver
 ```
 
-### NATS Broker
-
-The NATS broker uses the NATS messaging system for message routing. It's suitable for distributed deployments and requires a running NATS server.
-
-```go
-natsOpts := websocketmq.DefaultNATSBrokerOptions()
-natsOpts.URL = "nats://localhost:4222" // NATS server URL
-broker, err := websocketmq.NewNATSBroker(logger, natsOpts)
-```
+This starts a server on port 3000 with hot-reload enabled.
 
 ## Examples
 
 See the `examples/` directory for complete examples:
 
 - `examples/simple`: A simple example showing basic usage of WebSocketMQ with the in-memory broker.
-- `examples/nats`: An example showing how to use WebSocketMQ with a NATS broker.
-
-### Running the NATS Example
-
-To run the NATS example, you need to have a NATS server running. You can start a NATS server using Docker:
-
-```bash
-docker run -d --name nats-server -p 4222:4222 -p 8222:8222 -p 6222:6222 nats
-```
-
-Then run the example:
-
-```bash
-go run ./examples/nats
-```
 
 ## License
 
 MIT
+
+[`cskr/pubsub`]: https://github.com/cskr/pubsub

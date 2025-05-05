@@ -1,77 +1,110 @@
-// Package main provides a tool for minifying JavaScript files.
-//
-// This program is intended to be run via `go generate` to create minified
-// versions of the JavaScript client files.
+// internal/buildjs/main.go
 package main
 
 import (
-	"fmt"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/tdewolff/minify/v2"
 	"github.com/tdewolff/minify/v2/js"
 )
 
-// main is the entry point for the buildjs tool.
-//
-//go:generate go run .
+// Simple program to copy and minify JavaScript files
+// Used by go generate to build client files
 func main() {
-	// Get the root directory of the project
-	rootDir, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting current directory: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Source and destination paths
-	srcPath := filepath.Join(rootDir, "client/src/client.js")
-	distDir := filepath.Join(rootDir, "dist")
-	fullJSPath := filepath.Join(distDir, "websocketmq.js")
-	minJSPath := filepath.Join(distDir, "websocketmq.min.js")
+	// Get source and destination directories
+	srcDir := "client/src"
+	distDir := "dist"
 
 	// Ensure dist directory exists
 	if err := os.MkdirAll(distDir, 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating dist directory: %v\n", err)
-		os.Exit(1)
+		log.Fatalf("Failed to create dist directory: %v", err)
 	}
 
-	// Read the source file
-	srcContent, err := os.ReadFile(srcPath)
+	// Process client.js
+	srcFile := filepath.Join(srcDir, "client.js")
+	unminFile := filepath.Join(distDir, "websocketmq.js")
+	minFile := filepath.Join(distDir, "websocketmq.min.js")
+
+	// Copy unminified version
+	if err := copyFile(srcFile, unminFile); err != nil {
+		log.Fatalf("Failed to copy unminified file: %v", err)
+	}
+	log.Printf("Copied %s to %s", srcFile, unminFile)
+
+	// Create minified version
+	if err := minifyFile(srcFile, minFile); err != nil {
+		log.Fatalf("Failed to create minified file: %v", err)
+	}
+	log.Printf("Minified %s to %s", srcFile, minFile)
+
+	// Print stats
+	srcInfo, err := os.Stat(srcFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading source file: %v\n", err)
-		os.Exit(1)
+		log.Fatalf("Failed to stat source file: %v", err)
 	}
 
-	// Write the full JS file
-	if err := os.WriteFile(fullJSPath, srcContent, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing full JS file: %v\n", err)
-		os.Exit(1)
+	minInfo, err := os.Stat(minFile)
+	if err != nil {
+		log.Fatalf("Failed to stat minified file: %v", err)
 	}
 
-	// Minify the JS file
+	reduction := float64(srcInfo.Size()-minInfo.Size()) / float64(srcInfo.Size()) * 100
+	log.Printf("Size reduction: %.1f%% (from %d bytes to %d bytes)",
+		reduction, srcInfo.Size(), minInfo.Size())
+}
+
+// copyFile copies a file from src to dst
+func copyFile(src, dst string) error {
+	// Open source file
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	// Create destination file
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	// Copy contents
+	_, err = io.Copy(dstFile, srcFile)
+	return err
+}
+
+// minifyFile creates a minified version of a JavaScript file
+func minifyFile(src, dst string) error {
+	// Open source file
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	// Create destination file
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	// Create minifier
 	m := minify.New()
-	m.AddFunc("application/javascript", js.Minify)
+	m.AddFunc("text/javascript", js.Minify)
 
-	minified, err := m.Bytes("application/javascript", srcContent)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error minifying JS: %v\n", err)
-		os.Exit(1)
+	// Minify JavaScript
+	reader := srcFile
+	mediatype := "text/javascript"
+	ext := strings.ToLower(filepath.Ext(src))
+	if ext == ".js" {
+		mediatype = "text/javascript"
 	}
 
-	// Write the minified JS file
-	if err := os.WriteFile(minJSPath, minified, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing minified JS file: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Print success message
-	srcSize := len(srcContent)
-	minSize := len(minified)
-	reduction := 100 - (minSize * 100 / srcSize)
-
-	fmt.Printf("JavaScript build complete:\n")
-	fmt.Printf("  Source:   %s (%d bytes)\n", srcPath, srcSize)
-	fmt.Printf("  Full:     %s (%d bytes)\n", fullJSPath, srcSize)
-	fmt.Printf("  Minified: %s (%d bytes, %d%% reduction)\n", minJSPath, minSize, reduction)
+	return m.Minify(mediatype, dstFile, reader)
 }

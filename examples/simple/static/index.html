@@ -1,238 +1,231 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>WebSocketMQ Example</title>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocketMQ Simple Example</title>
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
             max-width: 800px;
             margin: 0 auto;
             padding: 20px;
+            line-height: 1.6;
         }
         h1 {
             color: #333;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
         }
         .card {
-            border: 1px solid #ddd;
-            border-radius: 4px;
+            background: #f9f9f9;
+            border-radius: 5px;
             padding: 15px;
             margin-bottom: 20px;
-            background-color: #f9f9f9;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
-        #log {
-            height: 300px;
-            overflow-y: auto;
-            border: 1px solid #ddd;
+        pre {
+            background: #f0f0f0;
             padding: 10px;
-            background-color: #f5f5f5;
-            font-family: monospace;
-        }
-        .log-entry {
-            margin: 5px 0;
-            padding: 5px;
-            border-bottom: 1px solid #eee;
-        }
-        .log-time {
-            color: #888;
-            font-size: 0.8em;
-        }
-        .log-message {
-            margin-left: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
         }
         button {
-            padding: 8px 16px;
-            background-color: #4CAF50;
+            background: #4CAF50;
             color: white;
             border: none;
+            padding: 8px 15px;
             border-radius: 4px;
             cursor: pointer;
+            font-size: 14px;
             margin-right: 10px;
         }
         button:hover {
-            background-color: #45a049;
+            background: #45a049;
         }
         input {
             padding: 8px;
             border: 1px solid #ddd;
             border-radius: 4px;
-            width: 300px;
+            width: 250px;
+            margin-right: 10px;
+        }
+        #connection-status {
+            font-weight: bold;
+        }
+        .connected {
+            color: #4CAF50;
+        }
+        .disconnected {
+            color: #f44336;
+        }
+        #messages {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 10px;
+            margin-top: 15px;
+        }
+        .message {
+            margin-bottom: 8px;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .server-message {
+            background-color: #e3f2fd;
+        }
+        .client-message {
+            background-color: #e8f5e9;
+        }
+        .request-message {
+            background-color: #fff3e0;
+        }
+        .response-message {
+            background-color: #f3e5f5;
         }
     </style>
 </head>
 <body>
-    <h1>WebSocketMQ Example</h1>
+    <h1>WebSocketMQ Simple Example 2</h1>
     
     <div class="card">
-        <h2>Connection Status</h2>
-        <div id="status">Disconnected</div>
-        <button id="connect">Connect</button>
-        <button id="disconnect">Disconnect</button>
+        <h2>Connection</h2>
+        <p>Status: <span id="connection-status" class="disconnected">Disconnected</span></p>
+        <button id="connect-btn">Connect</button>
+        <button id="disconnect-btn">Disconnect</button>
     </div>
-    
+
     <div class="card">
         <h2>Publish Message</h2>
         <div>
-            <label for="topic">Topic:</label>
-            <input type="text" id="topic" value="user.login">
-        </div>
-        <div style="margin-top: 10px;">
-            <label for="message">Message:</label>
-            <input type="text" id="message" value='{"username": "test"}'>
-        </div>
-        <div style="margin-top: 10px;">
-            <button id="publish">Publish</button>
+            <input type="text" id="publish-topic" placeholder="Topic (e.g. client.message)" value="client.message">
+            <input type="text" id="publish-message" placeholder="Message content" value="Hello from browser!">
+            <button id="publish-btn">Publish</button>
         </div>
     </div>
-    
+
     <div class="card">
-        <h2>Request/Response</h2>
+        <h2>Request-Response</h2>
         <div>
-            <label for="request-topic">Topic:</label>
-            <input type="text" id="request-topic" value="server.echo">
-        </div>
-        <div style="margin-top: 10px;">
-            <label for="request-message">Message:</label>
-            <input type="text" id="request-message" value='{"message": "Hello, server!"}'>
-        </div>
-        <div style="margin-top: 10px;">
-            <button id="request">Send Request</button>
+            <input type="text" id="request-topic" placeholder="Topic (e.g. server.echo)" value="server.echo">
+            <input type="text" id="request-message" placeholder="Request content" value="Echo this message">
+            <button id="request-btn">Send Request</button>
         </div>
     </div>
-    
+
     <div class="card">
-        <h2>Log</h2>
-        <div id="log"></div>
+        <h2>Message Log</h2>
+        <div id="messages"></div>
     </div>
-    
-    <script src="/wsmq/websocketmq.min.js"></script>
+
+    <script src="/wsmq/websocketmq.js"></script>
     <script>
-        // Initialize client
-        let client = null;
-        
-        // DOM elements
-        const statusEl = document.getElementById('status');
-        const logEl = document.getElementById('log');
-        const connectBtn = document.getElementById('connect');
-        const disconnectBtn = document.getElementById('disconnect');
-        const publishBtn = document.getElementById('publish');
-        const requestBtn = document.getElementById('request');
-        const topicInput = document.getElementById('topic');
-        const messageInput = document.getElementById('message');
+        // Elements
+        const connectionStatus = document.getElementById('connection-status');
+        const connectBtn = document.getElementById('connect-btn');
+        const disconnectBtn = document.getElementById('disconnect-btn');
+        const publishTopicInput = document.getElementById('publish-topic');
+        const publishMessageInput = document.getElementById('publish-message');
+        const publishBtn = document.getElementById('publish-btn');
         const requestTopicInput = document.getElementById('request-topic');
         const requestMessageInput = document.getElementById('request-message');
+        const requestBtn = document.getElementById('request-btn');
+        const messagesContainer = document.getElementById('messages');
         
-        // Log function
-        function log(message) {
-            const entry = document.createElement('div');
-            entry.className = 'log-entry';
+        // Create WebSocketMQ client
+        const client = new WebSocketMQ.Client({
+            url: `ws://${window.location.host}/ws`,
+            reconnect: true,
+            devMode: true
+        });
+
+        // Helper to add messages to the log
+        function addMessage(type, title, content) {
+            const messageEl = document.createElement('div');
+            messageEl.className = `message ${type}-message`;
             
-            const time = document.createElement('span');
-            time.className = 'log-time';
-            time.textContent = new Date().toLocaleTimeString();
+            const titleEl = document.createElement('strong');
+            titleEl.textContent = title;
             
-            const msg = document.createElement('span');
-            msg.className = 'log-message';
-            msg.textContent = message;
+            const contentEl = document.createElement('pre');
+            if (typeof content === 'object') {
+                contentEl.textContent = JSON.stringify(content, null, 2);
+            } else {
+                contentEl.textContent = content;
+            }
             
-            entry.appendChild(time);
-            entry.appendChild(msg);
+            messageEl.appendChild(titleEl);
+            messageEl.appendChild(document.createElement('br'));
+            messageEl.appendChild(contentEl);
             
-            logEl.appendChild(entry);
-            logEl.scrollTop = logEl.scrollHeight;
+            messagesContainer.appendChild(messageEl);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
-        
-        // Connect button
+
+        // Connection button handlers
         connectBtn.addEventListener('click', () => {
-            if (client) return;
-            
-            client = new WebSocketMQ.Client({
-                url: `ws://${window.location.host}/ws`,
-                reconnect: true,
-                devMode: true
-            });
-            
-            client.onConnect(() => {
-                statusEl.textContent = 'Connected';
-                statusEl.style.color = 'green';
-                log('Connected to server');
-                
-                // Subscribe to server.tick
-                client.subscribe('server.tick', (body) => {
-                    log(`Received tick: ${body.time}`);
-                });
-            });
-            
-            client.onDisconnect(() => {
-                statusEl.textContent = 'Disconnected';
-                statusEl.style.color = 'red';
-                log('Disconnected from server');
-            });
-            
-            client.onError((err) => {
-                log(`Error: ${err}`);
-            });
-            
             client.connect();
         });
-        
-        // Disconnect button
+
         disconnectBtn.addEventListener('click', () => {
-            if (!client) return;
-            
             client.disconnect();
-            client = null;
         });
-        
-        // Publish button
+
+        // Publish button handler
         publishBtn.addEventListener('click', () => {
-            if (!client) {
-                log('Not connected');
-                return;
-            }
+            const topic = publishTopicInput.value.trim();
+            const message = publishMessageInput.value.trim();
             
-            const topic = topicInput.value;
-            let message;
-            
-            try {
-                message = JSON.parse(messageInput.value);
-            } catch (err) {
-                log(`Invalid JSON: ${err.message}`);
-                return;
-            }
-            
-            try {
-                client.publish(topic, message);
-                log(`Published to ${topic}: ${messageInput.value}`);
-            } catch (err) {
-                log(`Error publishing: ${err.message}`);
+            if (topic && message) {
+                client.publish(topic, { text: message, timestamp: new Date().toISOString() });
+                addMessage('client', `Published to ${topic}:`, { text: message });
             }
         });
-        
-        // Request button
-        requestBtn.addEventListener('click', async () => {
-            if (!client) {
-                log('Not connected');
-                return;
-            }
+
+        // Request button handler
+        requestBtn.addEventListener('click', () => {
+            const topic = requestTopicInput.value.trim();
+            const message = requestMessageInput.value.trim();
             
-            const topic = requestTopicInput.value;
-            let message;
-            
-            try {
-                message = JSON.parse(requestMessageInput.value);
-            } catch (err) {
-                log(`Invalid JSON: ${err.message}`);
-                return;
-            }
-            
-            try {
-                log(`Sending request to ${topic}: ${requestMessageInput.value}`);
-                const response = await client.request(topic, message, 5000);
-                log(`Received response: ${JSON.stringify(response)}`);
-            } catch (err) {
-                log(`Error with request: ${err.message}`);
+            if (topic && message) {
+                addMessage('request', `Request to ${topic}:`, { text: message });
+                
+                client.request(topic, { text: message, timestamp: new Date().toISOString() }, 5000)
+                    .then(response => {
+                        addMessage('response', `Response from ${topic}:`, response);
+                    })
+                    .catch(err => {
+                        addMessage('response', `Request failed:`, err.message);
+                    });
             }
         });
+
+        // Set up client event handlers
+        client.onConnect(() => {
+            connectionStatus.textContent = 'Connected';
+            connectionStatus.className = 'connected';
+            addMessage('server', 'Connection established', 'Connected to WebSocketMQ server');
+            
+            // Subscribe to server ticks
+            client.subscribe('server.tick', (body) => {
+                addMessage('server', 'Received server tick:', body);
+            });
+        });
+
+        client.onDisconnect(() => {
+            connectionStatus.textContent = 'Disconnected';
+            connectionStatus.className = 'disconnected';
+            addMessage('server', 'Connection closed', 'Disconnected from WebSocketMQ server');
+        });
+
+        client.onError((err) => {
+            addMessage('server', 'Error:', err.message || 'Unknown error');
+        });
+
+        // Initial connect
+        client.connect();
     </script>
 </body>
 </html>
