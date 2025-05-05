@@ -6,6 +6,7 @@
 - [.gitignore (Add or ensure this line exists)](#file--gitignore (Add or ensure this line exists))
 - [go.mod](#file-go-mod)
 - [go.sum](#file-go-sum)
+- [README.md](#file-README-md)
 - [websocketmq_test.go](#file-websocketmq_test-go)
 - [websocketmq.go](#file-websocketmq-go)
 
@@ -87,11 +88,6 @@
 - [integration_test.go](#file-pkg-server-integration_test-go)
 - [simple_handler_test.go](#file-pkg-server-simple_handler_test-go)
 
-## scripts
-
-- [build-js.sh](#file-scripts-build-js-sh)
-- [extract-files.js](#file-scripts-extract-files-js)
-
 ---
 
 <a id="file--gitignore"></a>
@@ -117,6 +113,335 @@ node_modules/
 
 # Ignore built JS client output
 client/dist/
+```
+
+<a id="file-README-md"></a>
+**File: README.md**
+
+```markdown
+# WebSocketMQ (Go)
+
+Lightweight, embeddable **WebSocket message‑queue** for Go web apps.
+
+* **Single static binary** – pure‑Go back‑end, no external broker required.
+* **Pluggable broker** – default in‑memory fan‑out powered by [`cskr/pubsub`].  Replace with NATS/Redis later via the `Broker` interface.
+* **Tiny JS client** – `< 10 kB` min‑gzip, universal `<script>` drop‑in.
+* **Dev hot‑reload** – built‑in file watcher publishes `_dev.hotreload`, causing connected browsers to reload and funnel JS errors back to the Go log.
+
+```bash
+# quick demo
+go run ./examples/simple
+```
+
+## Features
+
+- **Application Messaging:** Topic-based publish/subscribe, request/response patterns (client-server & server-client).
+- **Developer Experience:** Optional built-in hot-reloading for web development (auto-refresh on file changes, JS error reporting back to the server).
+- **Extensibility:** A pluggable broker interface allowing future replacement of the default in-memory broker with systems like NATS without altering the core WebSocket handling or client code.
+- **Security:** Configurable message size limits and origin restrictions for production use.
+
+## Installation
+
+```bash
+go get github.com/lightforgemedia/go-websocketmq
+```
+
+## Quick Start
+
+### Server-side (Go)
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "net/http"
+
+    "github.com/lightforgemedia/go-websocketmq"
+)
+
+// Simple logger implementation
+type Logger struct{}
+
+func (l *Logger) Debug(msg string, args ...any) { log.Printf("DEBUG: "+msg, args...) }
+func (l *Logger) Info(msg string, args ...any)  { log.Printf("INFO: "+msg, args...) }
+func (l *Logger) Warn(msg string, args ...any)  { log.Printf("WARN: "+msg, args...) }
+func (l *Logger) Error(msg string, args ...any) { log.Printf("ERROR: "+msg, args...) }
+
+func main() {
+    logger := &Logger{}
+    
+    // Create a broker
+    brokerOpts := websocketmq.DefaultBrokerOptions()
+    broker := websocketmq.NewPubSubBroker(logger, brokerOpts)
+    
+    // Create a WebSocket handler with security options
+    handlerOpts := websocketmq.DefaultHandlerOptions()
+    handlerOpts.MaxMessageSize = 1024 * 1024 // 1MB limit
+    handlerOpts.AllowedOrigins = []string{"https://example.com"} // Restrict to specific origins
+    handler := websocketmq.NewHandler(broker, logger, handlerOpts)
+    
+    // Set up HTTP routes
+    mux := http.NewServeMux()
+    mux.Handle("/ws", handler)
+    mux.Handle("/wsmq/", http.StripPrefix("/wsmq/", websocketmq.ScriptHandler()))
+    mux.Handle("/", http.FileServer(http.Dir("static")))
+    
+    // Subscribe to a topic
+    broker.Subscribe(context.Background(), "user.login", func(ctx context.Context, m *websocketmq.Message) (*websocketmq.Message, error) {
+        logger.Info("User logged in: %v", m.Body)
+        return nil, nil
+    })
+    
+    // Start the server
+    logger.Info("Server starting on :8080")
+    log.Fatal(http.ListenAndServe(":8080", mux))
+}
+```
+
+### Client-side (JavaScript)
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocketMQ Example</title>
+</head>
+<body>
+    <h1>WebSocketMQ Example</h1>
+    
+    <script src="/wsmq/websocketmq.min.js"></script>
+    <script>
+        // Initialize client
+        const client = new WebSocketMQ.Client({
+            url: `ws://${window.location.host}/ws`,
+            reconnect: true,
+            devMode: true // Enable for hot-reload and error reporting
+        });
+        
+        client.onConnect(() => {
+            console.log('Connected to server');
+            
+            // Publish a message
+            client.publish('user.login', { username: 'test' });
+            
+            // Subscribe to a topic
+            client.subscribe('server.tick', (body) => {
+                console.log('Received tick:', body);
+            });
+            
+            // Make a request
+            client.request('server.echo', { message: 'Hello, server!' }, 5000)
+                .then(response => {
+                    console.log('Server response:', response);
+                })
+                .catch(err => {
+                    console.error('Request failed:', err);
+                });
+        });
+        
+        client.onDisconnect(() => {
+            console.log('Disconnected from server');
+        });
+        
+        client.onError((err) => {
+            console.error('WebSocket error:', err);
+        });
+        
+        // Connect to the server
+        client.connect();
+    </script>
+</body>
+</html>
+```
+
+## API Reference
+
+### Go API
+
+#### Broker
+
+```go
+// Create an in-memory broker
+brokerOpts := websocketmq.DefaultBrokerOptions()
+broker := websocketmq.NewPubSubBroker(logger, brokerOpts)
+
+// Create a NATS broker
+natsOpts := websocketmq.DefaultNATSBrokerOptions()
+broker, err := websocketmq.NewNATSBroker(logger, natsOpts)
+
+// Publish a message
+msg := websocketmq.NewEvent("topic.name", map[string]any{
+    "key": "value",
+})
+broker.Publish(context.Background(), msg)
+
+// Subscribe to a topic
+broker.Subscribe(context.Background(), "topic.name", func(ctx context.Context, m *websocketmq.Message) (*websocketmq.Message, error) {
+    // Handle message
+    return nil, nil
+})
+
+// Make a request
+response, err := broker.Request(context.Background(), requestMsg, 5000)
+```
+
+#### WebSocket Handler
+
+```go
+// Create a WebSocket handler with security options
+handlerOpts := websocketmq.DefaultHandlerOptions()
+handlerOpts.MaxMessageSize = 1024 * 1024 // 1MB limit
+handlerOpts.AllowedOrigins = []string{"https://example.com"} // Restrict to specific origins
+handler := websocketmq.NewHandler(broker, logger, handlerOpts)
+
+// Mount the handler
+mux.Handle("/ws", handler)
+```
+
+#### JavaScript Client Handler
+
+```go
+// Serve the JavaScript client
+mux.Handle("/wsmq/", http.StripPrefix("/wsmq/", websocketmq.ScriptHandler()))
+```
+
+#### Development Watcher
+
+```go
+// Start development watcher
+watchOpts := websocketmq.DefaultDevWatchOptions()
+stopWatcher, err := websocketmq.StartDevWatcher(context.Background(), broker, logger, watchOpts)
+if err != nil {
+    // Handle error
+}
+defer stopWatcher()
+```
+
+### JavaScript API
+
+#### Client
+
+```javascript
+// Create a client
+const client = new WebSocketMQ.Client({
+    url: 'ws://localhost:8080/ws',
+    reconnect: true,
+    reconnectInterval: 1000,
+    maxReconnectInterval: 30000,
+    reconnectMultiplier: 1.5,
+    devMode: false
+});
+
+// Connect
+client.connect();
+
+// Disconnect
+client.disconnect();
+
+// Event handlers
+client.onConnect(callback);
+client.onDisconnect(callback);
+client.onError(callback);
+```
+
+#### Messaging
+
+```javascript
+// Publish a message
+client.publish('topic.name', { key: 'value' });
+
+// Subscribe to a topic
+const unsubscribe = client.subscribe('topic.name', (body, message) => {
+    // Handle message
+});
+
+// Unsubscribe
+unsubscribe();
+
+// Make a request
+client.request('topic.name', { key: 'value' }, 5000)
+    .then(response => {
+        // Handle response
+    })
+    .catch(err => {
+        // Handle error
+    });
+```
+
+## Development Mode
+
+WebSocketMQ includes built-in development features to improve the developer experience:
+
+1. **Hot Reload**: When files are changed, the watcher publishes a message to the `_dev.hotreload` topic, causing connected browsers to reload.
+
+2. **JavaScript Error Reporting**: In development mode, the JavaScript client catches errors and unhandled promise rejections and reports them back to the server via the `_dev.js-error` topic.
+
+To enable development mode:
+
+1. Server-side:
+```go
+watchOpts := websocketmq.DefaultDevWatchOptions()
+stopWatcher, err := websocketmq.StartDevWatcher(context.Background(), broker, logger, watchOpts)
+```
+
+2. Client-side:
+```javascript
+const client = new WebSocketMQ.Client({
+    url: 'ws://localhost:8080/ws',
+    devMode: true
+});
+```
+
+## Broker Implementations
+
+WebSocketMQ supports multiple broker implementations:
+
+### In-Memory Broker
+
+The default in-memory broker uses the `cskr/pubsub` package for message routing. It's suitable for single-server deployments and doesn't require any external dependencies.
+
+```go
+brokerOpts := websocketmq.DefaultBrokerOptions()
+broker := websocketmq.NewPubSubBroker(logger, brokerOpts)
+```
+
+### NATS Broker
+
+The NATS broker uses the NATS messaging system for message routing. It's suitable for distributed deployments and requires a running NATS server.
+
+```go
+natsOpts := websocketmq.DefaultNATSBrokerOptions()
+natsOpts.URL = "nats://localhost:4222" // NATS server URL
+broker, err := websocketmq.NewNATSBroker(logger, natsOpts)
+```
+
+## Examples
+
+See the `examples/` directory for complete examples:
+
+- `examples/simple`: A simple example showing basic usage of WebSocketMQ with the in-memory broker.
+- `examples/nats`: An example showing how to use WebSocketMQ with a NATS broker.
+
+### Running the NATS Example
+
+To run the NATS example, you need to have a NATS server running. You can start a NATS server using Docker:
+
+```bash
+docker run -d --name nats-server -p 4222:4222 -p 8222:8222 -p 6222:6222 nats
+```
+
+Then run the example:
+
+```bash
+go run ./examples/nats
+```
+
+## License
+
+MIT
+
 ```
 
 <a id="file-assets-dist-websocketmq-js"></a>
@@ -523,7 +848,7 @@ client/dist/
 **File: assets/dist/websocketmq.min.js**
 
 ```javascript
-(function(e,t){typeof define=="function"&&define.amd?define([],t):typeof module=="object"&&module.exports?module.exports=t():e.WebSocketMQ=t()})(typeof self!="undefined"?self:this,function(){class e{constructor(e){this.url=e.url,this.reconnect=e.reconnect!==!1,this.reconnectInterval=e.reconnectInterval||1e3,this.maxReconnectInterval=e.maxReconnectInterval||3e4,this.reconnectMultiplier=e.reconnectMultiplier||1.5,this.devMode=e.devMode||!1,this.ws=null,this.subs=new Map,this.connectCallbacks=[],this.disconnectCallbacks=[],this.errorCallbacks=[],this.currentReconnectInterval=this.reconnectInterval,this.reconnectTimer=null,this.isConnecting=!1,this.isConnected=!1,this.devMode&&this._setupDevMode()}connect(){if(this.isConnecting||this.isConnected)return;this.isConnecting=!0,this.ws=new WebSocket(this.url),this.ws.onopen=e=>{this.isConnecting=!1,this.isConnected=!0,this.currentReconnectInterval=this.reconnectInterval,this._notifyCallbacks(this.connectCallbacks,e)},this.ws.onclose=e=>{this.isConnecting=!1,this.isConnected=!1,this._notifyCallbacks(this.disconnectCallbacks,e),this.reconnect&&!e.wasClean&&this._scheduleReconnect()},this.ws.onerror=e=>{this._notifyCallbacks(this.errorCallbacks,e)},this.ws.onmessage=e=>{try{const t=JSON.parse(e.data),n=t.header.topic||t.header.correlationID;if(this.subs.has(n)){const e=this.subs.get(n);for(const s of e){const n=s(t.body,t);t.header.type==="request"&&t.header.correlationID&&n!==0[0]&&Promise.resolve(n).then(e=>{this._sendResponse(t.header.correlationID,e)}).catch(e=>{console.error("Error in request handler:",e)})}}}catch(e){console.error("Error processing message:",e)}}}disconnect(){this.ws&&(this.reconnect=!1,this.ws.close(),this.ws=null),this.reconnectTimer&&(clearTimeout(this.reconnectTimer),this.reconnectTimer=null)}subscribe(e,t){this.subs.has(e)||this.subs.set(e,[]);const n=this.subs.get(e);return n.push(t),()=>{const s=n.indexOf(t);s!==-1&&(n.splice(s,1),n.length===0&&this.subs.delete(e))}}publish(e,t){if(!this.isConnected)throw new Error("Not connected");const n={header:{messageID:this._generateID(),type:"event",topic:e,timestamp:Date.now()},body:t};this.ws.send(JSON.stringify(n))}request(e,t,n=5e3){return this.isConnected?new Promise((s,o)=>{const i=this._generateID(),a=setTimeout(()=>{this.subs.has(i)&&this.subs.delete(i),o(new Error(`Request timed out after ${n}ms`))},n);this.subscribe(i,e=>{clearTimeout(a),this.subs.has(i)&&this.subs.delete(i),s(e)});const r={header:{messageID:i,correlationID:i,type:"request",topic:e,timestamp:Date.now(),ttl:n},body:t};this.ws.send(JSON.stringify(r))}):Promise.reject(new Error("Not connected"))}onConnect(e){this.connectCallbacks.push(e),this.isConnected&&e()}onDisconnect(e){this.disconnectCallbacks.push(e)}onError(e){this.errorCallbacks.push(e)}_generateID(){return typeof crypto!="undefined"&&crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).substring(2)}_sendResponse(e,t){const n={header:{messageID:this._generateID(),correlationID:e,type:"response",timestamp:Date.now()},body:t};this.ws.send(JSON.stringify(n))}_scheduleReconnect(){this.reconnectTimer&&clearTimeout(this.reconnectTimer),this.reconnectTimer=setTimeout(()=>{this.reconnectTimer=null,this.connect()},this.currentReconnectInterval),this.currentReconnectInterval=Math.min(this.currentReconnectInterval*this.reconnectMultiplier,this.maxReconnectInterval)}_notifyCallbacks(e,t){for(const n of e)try{n(t)}catch(e){console.error("Error in callback:",e)}}_setupDevMode(){this.subscribe("_dev.hotreload",e=>{console.log("[WebSocketMQ] Hot reload triggered:",e),window.location.reload()}),window.addEventListener("error",e=>{if(!this.isConnected)return;this.publish("_dev.js-error",{type:"error",message:e.message,filename:e.filename,lineno:e.lineno,colno:e.colno,stack:e.error?e.error.stack:null,timestamp:Date.now()})}),window.addEventListener("unhandledrejection",e=>{if(!this.isConnected)return;this.publish("_dev.js-error",{type:"unhandledrejection",message:e.reason?e.reason.message||String(e.reason):"Unknown promise rejection",stack:e.reason&&e.reason.stack?e.reason.stack:null,timestamp:Date.now()})}),console.log("[WebSocketMQ] Development mode enabled")}}return{Client:e}})
+(function(e,t){typeof define=="function"&&define.amd?define([],t):typeof module=="object"&&module.exports?module.exports=t():e.WebSocketMQ=t()})(typeof self!="undefined"?self:this,function(){class e{constructor(e){this.url=e.url,this.reconnect=e.reconnect!==!1,this.reconnectInterval=e.reconnectInterval||1e3,this.maxReconnectInterval=e.maxReconnectInterval||3e4,this.reconnectMultiplier=e.reconnectMultiplier||1.5,this.devMode=e.devMode||!1,this.ws=null,this.subs=new Map,this.connectCallbacks=[],this.disconnectCallbacks=[],this.errorCallbacks=[],this.currentReconnectInterval=this.reconnectInterval,this.reconnectTimer=null,this.isConnecting=!1,this.isConnected=!1,this.devMode&&this._setupDevMode()}connect(){if(this.isConnecting||this.isConnected)return;this.isConnecting=!0,this.ws=new WebSocket(this.url),this.ws.onopen=e=>{this.isConnecting=!1,this.isConnected=!0,this.currentReconnectInterval=this.reconnectInterval,this._notifyCallbacks(this.connectCallbacks,e)},this.ws.onclose=e=>{this.isConnecting=!1,this.isConnected=!1,this._notifyCallbacks(this.disconnectCallbacks,e),this.reconnect&&!e.wasClean&&this._scheduleReconnect()},this.ws.onerror=e=>{this._notifyCallbacks(this.errorCallbacks,e)},this.ws.onmessage=e=>{try{const t=JSON.parse(e.data),n=t.header.topic||t.header.correlationID;if(this.subs.has(n)){const e=this.subs.get(n);for(const s of e){const n=s(t.body,t);t.header.type==="request"&&t.header.correlationID&&n!==void 0&&Promise.resolve(n).then(e=>{this._sendResponse(t.header.correlationID,e)}).catch(e=>{console.error("Error in request handler:",e)})}}}catch(e){console.error("Error processing message:",e)}}}disconnect(){this.ws&&(this.reconnect=!1,this.ws.close(),this.ws=null),this.reconnectTimer&&(clearTimeout(this.reconnectTimer),this.reconnectTimer=null)}subscribe(e,t){this.subs.has(e)||this.subs.set(e,[]);const n=this.subs.get(e);return n.push(t),()=>{const s=n.indexOf(t);s!==-1&&(n.splice(s,1),n.length===0&&this.subs.delete(e))}}publish(e,t){if(!this.isConnected)throw new Error("Not connected");const n={header:{messageID:this._generateID(),type:"event",topic:e,timestamp:Date.now()},body:t};this.ws.send(JSON.stringify(n))}request(e,t,n=5e3){return this.isConnected?new Promise((s,o)=>{const i=this._generateID(),a=setTimeout(()=>{this.subs.has(i)&&this.subs.delete(i),o(new Error(`Request timed out after ${n}ms`))},n);this.subscribe(i,e=>{clearTimeout(a),this.subs.has(i)&&this.subs.delete(i),s(e)});const r={header:{messageID:i,correlationID:i,type:"request",topic:e,timestamp:Date.now(),ttl:n},body:t};this.ws.send(JSON.stringify(r))}):Promise.reject(new Error("Not connected"))}onConnect(e){this.connectCallbacks.push(e),this.isConnected&&e()}onDisconnect(e){this.disconnectCallbacks.push(e)}onError(e){this.errorCallbacks.push(e)}_generateID(){return typeof crypto!="undefined"&&crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).substring(2)}_sendResponse(e,t){const n={header:{messageID:this._generateID(),correlationID:e,type:"response",timestamp:Date.now()},body:t};this.ws.send(JSON.stringify(n))}_scheduleReconnect(){this.reconnectTimer&&clearTimeout(this.reconnectTimer),this.reconnectTimer=setTimeout(()=>{this.reconnectTimer=null,this.connect()},this.currentReconnectInterval),this.currentReconnectInterval=Math.min(this.currentReconnectInterval*this.reconnectMultiplier,this.maxReconnectInterval)}_notifyCallbacks(e,t){for(const n of e)try{n(t)}catch(e){console.error("Error in callback:",e)}}_setupDevMode(){this.subscribe("_dev.hotreload",e=>{console.log("[WebSocketMQ] Hot reload triggered:",e),window.location.reload()}),window.addEventListener("error",e=>{if(!this.isConnected)return;this.publish("_dev.js-error",{type:"error",message:e.message,filename:e.filename,lineno:e.lineno,colno:e.colno,stack:e.error?e.error.stack:null,timestamp:Date.now()})}),window.addEventListener("unhandledrejection",e=>{if(!this.isConnected)return;this.publish("_dev.js-error",{type:"unhandledrejection",message:e.reason?e.reason.message||String(e.reason):"Unknown promise rejection",stack:e.reason&&e.reason.stack?e.reason.stack:null,timestamp:Date.now()})}),console.log("[WebSocketMQ] Development mode enabled")}}return{Client:e}})
 ```
 
 <a id="file-assets-embed-go"></a>
@@ -1452,7 +1777,7 @@ func main() {
 **File: dist/websocketmq.min.js**
 
 ```javascript
-(function(e,t){typeof define=="function"&&define.amd?define([],t):typeof module=="object"&&module.exports?module.exports=t():e.WebSocketMQ=t()})(typeof self!="undefined"?self:this,function(){class e{constructor(e){this.url=e.url,this.reconnect=e.reconnect!==!1,this.reconnectInterval=e.reconnectInterval||1e3,this.maxReconnectInterval=e.maxReconnectInterval||3e4,this.reconnectMultiplier=e.reconnectMultiplier||1.5,this.devMode=e.devMode||!1,this.ws=null,this.subs=new Map,this.connectCallbacks=[],this.disconnectCallbacks=[],this.errorCallbacks=[],this.currentReconnectInterval=this.reconnectInterval,this.reconnectTimer=null,this.isConnecting=!1,this.isConnected=!1,this.devMode&&this._setupDevMode()}connect(){if(this.isConnecting||this.isConnected)return;this.isConnecting=!0,this.ws=new WebSocket(this.url),this.ws.onopen=e=>{this.isConnecting=!1,this.isConnected=!0,this.currentReconnectInterval=this.reconnectInterval,this._notifyCallbacks(this.connectCallbacks,e)},this.ws.onclose=e=>{this.isConnecting=!1,this.isConnected=!1,this._notifyCallbacks(this.disconnectCallbacks,e),this.reconnect&&!e.wasClean&&this._scheduleReconnect()},this.ws.onerror=e=>{this._notifyCallbacks(this.errorCallbacks,e)},this.ws.onmessage=e=>{try{const t=JSON.parse(e.data),n=t.header.topic||t.header.correlationID;if(this.subs.has(n)){const e=this.subs.get(n);for(const s of e){const n=s(t.body,t);t.header.type==="request"&&t.header.correlationID&&n!==0[0]&&Promise.resolve(n).then(e=>{this._sendResponse(t.header.correlationID,e)}).catch(e=>{console.error("Error in request handler:",e)})}}}catch(e){console.error("Error processing message:",e)}}}disconnect(){this.ws&&(this.reconnect=!1,this.ws.close(),this.ws=null),this.reconnectTimer&&(clearTimeout(this.reconnectTimer),this.reconnectTimer=null)}subscribe(e,t){this.subs.has(e)||this.subs.set(e,[]);const n=this.subs.get(e);return n.push(t),()=>{const s=n.indexOf(t);s!==-1&&(n.splice(s,1),n.length===0&&this.subs.delete(e))}}publish(e,t){if(!this.isConnected)throw new Error("Not connected");const n={header:{messageID:this._generateID(),type:"event",topic:e,timestamp:Date.now()},body:t};this.ws.send(JSON.stringify(n))}request(e,t,n=5e3){return this.isConnected?new Promise((s,o)=>{const i=this._generateID(),a=setTimeout(()=>{this.subs.has(i)&&this.subs.delete(i),o(new Error(`Request timed out after ${n}ms`))},n);this.subscribe(i,e=>{clearTimeout(a),this.subs.has(i)&&this.subs.delete(i),s(e)});const r={header:{messageID:i,correlationID:i,type:"request",topic:e,timestamp:Date.now(),ttl:n},body:t};this.ws.send(JSON.stringify(r))}):Promise.reject(new Error("Not connected"))}onConnect(e){this.connectCallbacks.push(e),this.isConnected&&e()}onDisconnect(e){this.disconnectCallbacks.push(e)}onError(e){this.errorCallbacks.push(e)}_generateID(){return typeof crypto!="undefined"&&crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).substring(2)}_sendResponse(e,t){const n={header:{messageID:this._generateID(),correlationID:e,type:"response",timestamp:Date.now()},body:t};this.ws.send(JSON.stringify(n))}_scheduleReconnect(){this.reconnectTimer&&clearTimeout(this.reconnectTimer),this.reconnectTimer=setTimeout(()=>{this.reconnectTimer=null,this.connect()},this.currentReconnectInterval),this.currentReconnectInterval=Math.min(this.currentReconnectInterval*this.reconnectMultiplier,this.maxReconnectInterval)}_notifyCallbacks(e,t){for(const n of e)try{n(t)}catch(e){console.error("Error in callback:",e)}}_setupDevMode(){this.subscribe("_dev.hotreload",e=>{console.log("[WebSocketMQ] Hot reload triggered:",e),window.location.reload()}),window.addEventListener("error",e=>{if(!this.isConnected)return;this.publish("_dev.js-error",{type:"error",message:e.message,filename:e.filename,lineno:e.lineno,colno:e.colno,stack:e.error?e.error.stack:null,timestamp:Date.now()})}),window.addEventListener("unhandledrejection",e=>{if(!this.isConnected)return;this.publish("_dev.js-error",{type:"unhandledrejection",message:e.reason?e.reason.message||String(e.reason):"Unknown promise rejection",stack:e.reason&&e.reason.stack?e.reason.stack:null,timestamp:Date.now()})}),console.log("[WebSocketMQ] Development mode enabled")}}return{Client:e}})
+(function(e,t){typeof define=="function"&&define.amd?define([],t):typeof module=="object"&&module.exports?module.exports=t():e.WebSocketMQ=t()})(typeof self!="undefined"?self:this,function(){class e{constructor(e){this.url=e.url,this.reconnect=e.reconnect!==!1,this.reconnectInterval=e.reconnectInterval||1e3,this.maxReconnectInterval=e.maxReconnectInterval||3e4,this.reconnectMultiplier=e.reconnectMultiplier||1.5,this.devMode=e.devMode||!1,this.ws=null,this.subs=new Map,this.connectCallbacks=[],this.disconnectCallbacks=[],this.errorCallbacks=[],this.currentReconnectInterval=this.reconnectInterval,this.reconnectTimer=null,this.isConnecting=!1,this.isConnected=!1,this.devMode&&this._setupDevMode()}connect(){if(this.isConnecting||this.isConnected)return;this.isConnecting=!0,this.ws=new WebSocket(this.url),this.ws.onopen=e=>{this.isConnecting=!1,this.isConnected=!0,this.currentReconnectInterval=this.reconnectInterval,this._notifyCallbacks(this.connectCallbacks,e)},this.ws.onclose=e=>{this.isConnecting=!1,this.isConnected=!1,this._notifyCallbacks(this.disconnectCallbacks,e),this.reconnect&&!e.wasClean&&this._scheduleReconnect()},this.ws.onerror=e=>{this._notifyCallbacks(this.errorCallbacks,e)},this.ws.onmessage=e=>{try{const t=JSON.parse(e.data),n=t.header.topic||t.header.correlationID;if(this.subs.has(n)){const e=this.subs.get(n);for(const s of e){const n=s(t.body,t);t.header.type==="request"&&t.header.correlationID&&n!==void 0&&Promise.resolve(n).then(e=>{this._sendResponse(t.header.correlationID,e)}).catch(e=>{console.error("Error in request handler:",e)})}}}catch(e){console.error("Error processing message:",e)}}}disconnect(){this.ws&&(this.reconnect=!1,this.ws.close(),this.ws=null),this.reconnectTimer&&(clearTimeout(this.reconnectTimer),this.reconnectTimer=null)}subscribe(e,t){this.subs.has(e)||this.subs.set(e,[]);const n=this.subs.get(e);return n.push(t),()=>{const s=n.indexOf(t);s!==-1&&(n.splice(s,1),n.length===0&&this.subs.delete(e))}}publish(e,t){if(!this.isConnected)throw new Error("Not connected");const n={header:{messageID:this._generateID(),type:"event",topic:e,timestamp:Date.now()},body:t};this.ws.send(JSON.stringify(n))}request(e,t,n=5e3){return this.isConnected?new Promise((s,o)=>{const i=this._generateID(),a=setTimeout(()=>{this.subs.has(i)&&this.subs.delete(i),o(new Error(`Request timed out after ${n}ms`))},n);this.subscribe(i,e=>{clearTimeout(a),this.subs.has(i)&&this.subs.delete(i),s(e)});const r={header:{messageID:i,correlationID:i,type:"request",topic:e,timestamp:Date.now(),ttl:n},body:t};this.ws.send(JSON.stringify(r))}):Promise.reject(new Error("Not connected"))}onConnect(e){this.connectCallbacks.push(e),this.isConnected&&e()}onDisconnect(e){this.disconnectCallbacks.push(e)}onError(e){this.errorCallbacks.push(e)}_generateID(){return typeof crypto!="undefined"&&crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).substring(2)}_sendResponse(e,t){const n={header:{messageID:this._generateID(),correlationID:e,type:"response",timestamp:Date.now()},body:t};this.ws.send(JSON.stringify(n))}_scheduleReconnect(){this.reconnectTimer&&clearTimeout(this.reconnectTimer),this.reconnectTimer=setTimeout(()=>{this.reconnectTimer=null,this.connect()},this.currentReconnectInterval),this.currentReconnectInterval=Math.min(this.currentReconnectInterval*this.reconnectMultiplier,this.maxReconnectInterval)}_notifyCallbacks(e,t){for(const n of e)try{n(t)}catch(e){console.error("Error in callback:",e)}}_setupDevMode(){this.subscribe("_dev.hotreload",e=>{console.log("[WebSocketMQ] Hot reload triggered:",e),window.location.reload()}),window.addEventListener("error",e=>{if(!this.isConnected)return;this.publish("_dev.js-error",{type:"error",message:e.message,filename:e.filename,lineno:e.lineno,colno:e.colno,stack:e.error?e.error.stack:null,timestamp:Date.now()})}),window.addEventListener("unhandledrejection",e=>{if(!this.isConnected)return;this.publish("_dev.js-error",{type:"unhandledrejection",message:e.reason?e.reason.message||String(e.reason):"Unknown promise rejection",stack:e.reason&&e.reason.stack?e.reason.stack:null,timestamp:Date.now()})}),console.log("[WebSocketMQ] Development mode enabled")}}return{Client:e}})
 ```
 
 <a id="file-docs-2025-05-04-01-md"></a>
@@ -3171,8 +3496,6 @@ type NATSBroker struct {
 	conn      *nats.Conn
 	subs      map[string]*nats.Subscription
 	subsLock  sync.RWMutex
-	respSubs  map[string]chan *model.Message
-	respLock  sync.RWMutex
 	queueName string
 }
 
@@ -3210,7 +3533,6 @@ func New(opts Options) (*NATSBroker, error) {
 	return &NATSBroker{
 		conn:      conn,
 		subs:      make(map[string]*nats.Subscription),
-		respSubs:  make(map[string]chan *model.Message),
 		queueName: opts.QueueName,
 	}, nil
 }
@@ -3247,17 +3569,32 @@ func (b *NATSBroker) Subscribe(ctx context.Context, topic string, handler broker
 	default:
 	}
 
-	// Check if we already have a subscription for this topic
-	b.subsLock.RLock()
-	_, exists := b.subs[topic]
-	b.subsLock.RUnlock()
+	// Use a mutex to ensure only one subscription is created per topic
+	b.subsLock.Lock()
+	defer b.subsLock.Unlock()
 
-	if exists {
-		return nil // Already subscribed
+	// Check if we already have a subscription for this topic
+	if sub, exists := b.subs[topic]; exists {
+		// If the subscription exists but is invalid, remove it
+		if sub == nil || sub.IsValid() == false {
+			delete(b.subs, topic)
+		} else {
+			return nil // Already subscribed with a valid subscription
+		}
 	}
+
+	// Create a new context for this subscription
+	subCtx, cancel := context.WithCancel(ctx)
 
 	// Subscribe to the topic with a queue group
 	sub, err := b.conn.QueueSubscribe(topic, b.queueName, func(msg *nats.Msg) {
+		// Check if the context is still valid
+		select {
+		case <-subCtx.Done():
+			return // Context is canceled, don't process the message
+		default:
+		}
+
 		// Unmarshal the message
 		var m model.Message
 		if err := json.Unmarshal(msg.Data, &m); err != nil {
@@ -3266,8 +3603,12 @@ func (b *NATSBroker) Subscribe(ctx context.Context, topic string, handler broker
 			return
 		}
 
+		// Create a context for this handler call
+		handlerCtx, handlerCancel := context.WithCancel(subCtx)
+		defer handlerCancel()
+
 		// Call the handler
-		resp, err := handler(ctx, &m)
+		resp, err := handler(handlerCtx, &m)
 		if err != nil {
 			// Log error and return
 			fmt.Printf("Error handling message: %v\n", err)
@@ -3279,21 +3620,33 @@ func (b *NATSBroker) Subscribe(ctx context.Context, topic string, handler broker
 			// Set the response topic to the correlation ID
 			resp.Header.Topic = m.Header.CorrelationID
 
-			// Publish the response
-			if err := b.Publish(ctx, resp); err != nil {
+			// Publish the response using a background context to ensure it's sent
+			// even if the original context is canceled
+			if err := b.Publish(context.Background(), resp); err != nil {
 				fmt.Printf("Error publishing response: %v\n", err)
 			}
 		}
 	})
 
 	if err != nil {
+		cancel() // Clean up the context if subscription fails
 		return fmt.Errorf("failed to subscribe to topic: %w", err)
 	}
 
 	// Store the subscription
-	b.subsLock.Lock()
 	b.subs[topic] = sub
-	b.subsLock.Unlock()
+
+	// Start a goroutine to clean up the subscription when the context is done
+	go func() {
+		<-ctx.Done()
+		b.subsLock.Lock()
+		if sub, exists := b.subs[topic]; exists && sub != nil {
+			sub.Unsubscribe()
+			delete(b.subs, topic)
+		}
+		b.subsLock.Unlock()
+		cancel() // Clean up the subscription context
+	}()
 
 	return nil
 }
@@ -3304,58 +3657,47 @@ func (b *NATSBroker) Request(ctx context.Context, req *model.Message, timeoutMs 
 		return nil, errors.New("request message cannot be nil")
 	}
 
-	// Create a channel to receive the response
-	respChan := make(chan *model.Message, 1)
-
-	// Store the response channel
-	b.respLock.Lock()
-	b.respSubs[req.Header.CorrelationID] = respChan
-	b.respLock.Unlock()
-
-	// Clean up when done
-	defer func() {
-		b.respLock.Lock()
-		delete(b.respSubs, req.Header.CorrelationID)
-		b.respLock.Unlock()
-		close(respChan)
-	}()
-
-	// Subscribe to the response topic (correlation ID)
-	sub, err := b.conn.Subscribe(req.Header.CorrelationID, func(msg *nats.Msg) {
-		// Unmarshal the message
-		var m model.Message
-		if err := json.Unmarshal(msg.Data, &m); err != nil {
-			// Log error and return
-			fmt.Printf("Error unmarshaling response: %v\n", err)
-			return
-		}
-
-		// Send the response to the channel
-		respChan <- &m
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to subscribe to response topic: %w", err)
-	}
-	defer sub.Unsubscribe()
-
-	// Publish the request
-	if err := b.Publish(ctx, req); err != nil {
-		return nil, fmt.Errorf("failed to publish request: %w", err)
-	}
-
-	// Wait for the response or timeout
-	timeout := time.NewTimer(time.Duration(timeoutMs) * time.Millisecond)
-	defer timeout.Stop()
-
+	// Check if context is canceled
 	select {
-	case resp := <-respChan:
-		return resp, nil
-	case <-timeout.C:
-		return nil, context.DeadlineExceeded
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	default:
 	}
+
+	// Use NATS built-in request-reply pattern
+	// This avoids the need to manage subscriptions manually
+	msg := nats.NewMsg(req.Header.Topic)
+
+	// Marshal the request message
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	msg.Data = data
+
+	// Set timeout
+	timeout := time.Duration(timeoutMs) * time.Millisecond
+
+	// Create a context with timeout
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// Send the request and wait for a response
+	resp, err := b.conn.RequestMsgWithContext(reqCtx, msg)
+	if err != nil {
+		if err == nats.ErrTimeout {
+			return nil, context.DeadlineExceeded
+		}
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+
+	// Unmarshal the response
+	var respMsg model.Message
+	if err := json.Unmarshal(resp.Data, &respMsg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &respMsg, nil
 }
 
 // Close closes the NATS connection and cleans up resources.
@@ -3889,26 +4231,71 @@ type PubSubBroker struct{ bus *pubsub.PubSub }
 
 func New(queueLen int) *PubSubBroker { return &PubSubBroker{bus: pubsub.New(queueLen)} }
 
-func (b *PubSubBroker) Publish(_ context.Context, m *model.Message) error {
+func (b *PubSubBroker) Publish(ctx context.Context, m *model.Message) error {
+	// Check if the context is canceled
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	if m == nil {
 		return errors.New("message cannot be nil")
 	}
+
 	raw, _ := json.Marshal(m)
 	b.bus.Pub(raw, m.Header.Topic)
 	return nil
 }
 
-func (b *PubSubBroker) Subscribe(_ context.Context, topic string, fn broker.Handler) error {
+func (b *PubSubBroker) Subscribe(ctx context.Context, topic string, fn broker.Handler) error {
+	// Check if the context is canceled
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	ch := b.bus.Sub(topic)
+
+	// Start a goroutine to handle messages
 	go func() {
-		for raw := range ch {
-			var msg model.Message
-			_ = json.Unmarshal(raw.([]byte), &msg)
-			if resp, err := fn(context.Background(), &msg); err == nil && resp != nil {
-				_ = b.Publish(context.Background(), resp) // response back on its correlationID topic
+		// Ensure we unsubscribe when the context is done
+		defer b.bus.Unsub(ch, topic)
+
+		// Create a done channel from the context
+		done := ctx.Done()
+
+		for {
+			select {
+			case <-done:
+				// Context is canceled, stop processing
+				return
+			case raw, ok := <-ch:
+				if !ok {
+					// Channel is closed
+					return
+				}
+
+				var msg model.Message
+				if err := json.Unmarshal(raw.([]byte), &msg); err != nil {
+					// Skip invalid messages
+					continue
+				}
+
+				// Create a new context for the handler
+				handlerCtx, cancel := context.WithCancel(ctx)
+
+				// Call the handler
+				resp, err := fn(handlerCtx, &msg)
+				cancel() // Clean up the handler context
+
+				// If the handler returned a response, publish it
+				if err == nil && resp != nil {
+					// Use a background context for the response to ensure it's sent
+					// even if the original context is canceled
+					_ = b.Publish(context.Background(), resp)
+				}
 			}
 		}
 	}()
+
 	return nil
 }
 
@@ -3978,7 +4365,7 @@ func TestPubSubBroker_Publish(t *testing.T) {
 		ctx := context.Background()
 
 		// Create a test message
-		msg := model.NewEvent("test.topic", map[string]interface{}{
+		msg := model.NewEvent("test.topic", map[string]any{
 			"key": "value",
 		})
 
@@ -4010,16 +4397,18 @@ func TestPubSubBroker_Publish(t *testing.T) {
 		cancel() // Cancel the context
 
 		// Create a test message
-		msg := model.NewEvent("test.topic", map[string]interface{}{
+		msg := model.NewEvent("test.topic", map[string]any{
 			"key": "value",
 		})
 
 		// Publish the message with canceled context
-		// Note: Our implementation currently ignores the context, but this test
-		// ensures we handle canceled contexts gracefully if that changes
+		// We now expect an error since we check for context cancellation
 		err := broker.Publish(ctx, msg)
-		if err != nil {
-			t.Fatalf("Error publishing message with canceled context: %v", err)
+		if err == nil {
+			t.Fatal("Expected error when publishing with canceled context, got nil")
+		}
+		if err != context.Canceled {
+			t.Fatalf("Expected context.Canceled error, got: %v", err)
 		}
 	})
 }
@@ -4045,7 +4434,7 @@ func TestPubSubBroker_Subscribe(t *testing.T) {
 		}
 
 		// Create a test message
-		msg := model.NewEvent(topic, map[string]interface{}{
+		msg := model.NewEvent(topic, map[string]any{
 			"key": "value",
 		})
 
@@ -4098,7 +4487,7 @@ func TestPubSubBroker_Subscribe(t *testing.T) {
 		}
 
 		// Create and publish a message to the first topic
-		msg1 := model.NewEvent(topic1, map[string]interface{}{
+		msg1 := model.NewEvent(topic1, map[string]any{
 			"key": "value1",
 		})
 		err = broker.Publish(ctx, msg1)
@@ -4107,7 +4496,7 @@ func TestPubSubBroker_Subscribe(t *testing.T) {
 		}
 
 		// Create and publish a message to the second topic
-		msg2 := model.NewEvent(topic2, map[string]interface{}{
+		msg2 := model.NewEvent(topic2, map[string]any{
 			"key": "value2",
 		})
 		err = broker.Publish(ctx, msg2)
@@ -4152,7 +4541,7 @@ func TestPubSubBroker_Subscribe(t *testing.T) {
 		}
 
 		// Create and publish a message
-		msg := model.NewEvent(topic, map[string]interface{}{
+		msg := model.NewEvent(topic, map[string]any{
 			"key": "value",
 		})
 		err = broker.Publish(ctx, msg)
@@ -4186,7 +4575,7 @@ func TestPubSubBroker_Request(t *testing.T) {
 					Topic:         m.Header.CorrelationID,
 					Timestamp:     time.Now().UnixMilli(),
 				},
-				Body: map[string]interface{}{
+				Body: map[string]any{
 					"response": "value",
 				},
 			}
@@ -4207,7 +4596,7 @@ func TestPubSubBroker_Request(t *testing.T) {
 				Timestamp:     time.Now().UnixMilli(),
 				TTL:           1000,
 			},
-			Body: map[string]interface{}{
+			Body: map[string]any{
 				"key": "value",
 			},
 		}
@@ -4254,7 +4643,7 @@ func TestPubSubBroker_Request(t *testing.T) {
 				Timestamp:     time.Now().UnixMilli(),
 				TTL:           100, // Short timeout
 			},
-			Body: map[string]interface{}{
+			Body: map[string]any{
 				"key": "value",
 			},
 		}
@@ -4295,7 +4684,7 @@ func TestPubSubBroker_Request(t *testing.T) {
 				Timestamp:     time.Now().UnixMilli(),
 				TTL:           1000,
 			},
-			Body: map[string]interface{}{
+			Body: map[string]any{
 				"key": "value",
 			},
 		}
@@ -4516,27 +4905,115 @@ import (
 	"nhooyr.io/websocket"
 )
 
-type Handler struct {
-	Broker broker.Broker
+// Options contains configuration options for the WebSocket handler.
+type Options struct {
+	// MaxMessageSize is the maximum size of a message in bytes.
+	// Default: 1MB
+	MaxMessageSize int64
+
+	// AllowedOrigins is a list of allowed origins for WebSocket connections.
+	// If empty, all origins are allowed (not recommended for production).
+	AllowedOrigins []string
 }
 
-func New(b broker.Broker) *Handler { return &Handler{Broker: b} }
+// DefaultOptions returns the default options for the WebSocket handler.
+func DefaultOptions() Options {
+	return Options{
+		MaxMessageSize: 1024 * 1024, // 1MB
+		AllowedOrigins: []string{},  // Empty means all origins allowed
+	}
+}
+
+// Handler handles WebSocket connections and routes messages through the broker.
+type Handler struct {
+	Broker  broker.Broker
+	Options Options
+}
+
+// New creates a new WebSocket handler with the given broker and options.
+func New(b broker.Broker, opts ...Options) *Handler {
+	h := &Handler{
+		Broker:  b,
+		Options: DefaultOptions(),
+	}
+
+	// Apply options if provided
+	if len(opts) > 0 {
+		h.Options = opts[0]
+	}
+
+	return h
+}
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	// Check origin if allowed origins are specified
+	if len(h.Options.AllowedOrigins) > 0 {
+		origin := r.Header.Get("Origin")
+		allowed := false
+
+		// Check if the origin is allowed
+		for _, allowedOrigin := range h.Options.AllowedOrigins {
+			if origin == allowedOrigin {
+				allowed = true
+				break
+			}
+		}
+
+		// If not allowed, return 403 Forbidden
+		if !allowed {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+	}
+
+	// Accept the WebSocket connection
+	acceptOptions := &websocket.AcceptOptions{
+		// Only skip verification if no allowed origins are specified
+		InsecureSkipVerify: len(h.Options.AllowedOrigins) == 0,
+		// Set the maximum message size
+		CompressionMode: websocket.CompressionDisabled,
+	}
+
+	ws, err := websocket.Accept(w, r, acceptOptions)
 	if err != nil {
 		return
 	}
-	ctx := r.Context()
+
+	// Set the maximum message size
+	if h.Options.MaxMessageSize > 0 {
+		ws.SetReadLimit(h.Options.MaxMessageSize)
+	}
+
+	// Create a context that's canceled when the connection is closed
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	// Start the reader goroutine
 	go h.reader(ctx, ws)
 }
 
 func (h *Handler) reader(ctx context.Context, ws *websocket.Conn) {
+	// Create a map to track subscriptions for this connection
+	subscriptions := make(map[string]context.CancelFunc)
+
+	// Ensure all subscriptions are canceled when the reader exits
+	defer func() {
+		for _, cancel := range subscriptions {
+			cancel()
+		}
+	}()
+
 	for {
 		_, data, err := ws.Read(ctx)
 		if err != nil {
-			return
+			// Check for context cancellation or connection closure
+			if ctx.Err() != nil || websocket.CloseStatus(err) != -1 {
+				return
+			}
+			// Log other errors and continue
+			continue
 		}
+
 		var m model.Message
 		if json.Unmarshal(data, &m) != nil {
 			continue
@@ -4545,18 +5022,39 @@ func (h *Handler) reader(ctx context.Context, ws *websocket.Conn) {
 		// basic routing: publish & if reply expected pipe back on correlationID
 		if m.Header.Type == "request" {
 			go func(req model.Message) {
-				resp, err := h.Broker.Request(ctx, &req, 5000)
+				// Create a context with timeout for the request
+				reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				defer cancel()
+
+				resp, err := h.Broker.Request(reqCtx, &req, 5000)
 				if err != nil || resp == nil {
 					return
 				}
+
+				// Check if the context is still valid
+				if ctx.Err() != nil {
+					return
+				}
+
 				raw, _ := json.Marshal(resp)
 				_ = ws.Write(ctx, websocket.MessageText, raw)
 			}(m)
 		} else if m.Header.Type == "subscribe" {
 			// Handle subscription messages
 			go func(sub model.Message) {
+				// Create a context for this subscription
+				subCtx, cancel := context.WithCancel(ctx)
+
+				// Store the cancel function to clean up later
+				subscriptions[sub.Header.Topic] = cancel
+
 				// Subscribe to the topic
-				err := h.Broker.Subscribe(ctx, sub.Header.Topic, func(ctx context.Context, msg *model.Message) (*model.Message, error) {
+				err := h.Broker.Subscribe(subCtx, sub.Header.Topic, func(msgCtx context.Context, msg *model.Message) (*model.Message, error) {
+					// Check if the context is still valid
+					if ctx.Err() != nil {
+						return nil, ctx.Err()
+					}
+
 					// Forward the message to the WebSocket client
 					raw, _ := json.Marshal(msg)
 					_ = ws.Write(ctx, websocket.MessageText, raw)
@@ -4580,6 +5078,11 @@ func (h *Handler) reader(ctx context.Context, ws *websocket.Conn) {
 				_ = ws.Write(ctx, websocket.MessageText, raw)
 			}(m)
 		} else {
+			// Check if the context is still valid
+			if ctx.Err() != nil {
+				return
+			}
+
 			_ = h.Broker.Publish(ctx, &m)
 		}
 	}
@@ -4591,6 +5094,97 @@ func (h *Handler) reader(ctx context.Context, ws *websocket.Conn) {
 **File: pkg/server/handler_test.go**
 
 ```go
+// pkg/server/handler_test.go
+package server
+
+import (
+"context"
+"net/http/httptest"
+"strings"
+"testing"
+"time"
+
+"github.com/lightforgemedia/go-websocketmq/pkg/broker"
+"github.com/lightforgemedia/go-websocketmq/pkg/model"
+"nhooyr.io/websocket"
+)
+
+// MockBroker is a mock implementation of the broker.Broker interface
+type MockBroker struct {
+PublishFunc   func(ctx context.Context, m *model.Message) error
+SubscribeFunc func(ctx context.Context, topic string, fn broker.Handler) error
+RequestFunc   func(ctx context.Context, req *model.Message, timeoutMs int64) (*model.Message, error)
+CloseFunc     func() error
+}
+
+func (b *MockBroker) Publish(ctx context.Context, m *model.Message) error {
+return b.PublishFunc(ctx, m)
+}
+
+func (b *MockBroker) Subscribe(ctx context.Context, topic string, fn broker.Handler) error {
+return b.SubscribeFunc(ctx, topic, fn)
+}
+
+func (b *MockBroker) Request(ctx context.Context, req *model.Message, timeoutMs int64) (*model.Message, error) {
+return b.RequestFunc(ctx, req, timeoutMs)
+}
+
+func (b *MockBroker) Close() error {
+if b.CloseFunc != nil {
+return b.CloseFunc()
+}
+return nil
+}
+
+func TestHandler_ServeHTTP(t *testing.T) {
+// Create a mock broker
+mockBroker := &MockBroker{
+PublishFunc: func(ctx context.Context, m *model.Message) error {
+return nil
+},
+SubscribeFunc: func(ctx context.Context, topic string, fn broker.Handler) error {
+return nil
+},
+RequestFunc: func(ctx context.Context, req *model.Message, timeoutMs int64) (*model.Message, error) {
+return nil, nil
+},
+CloseFunc: func() error {
+return nil
+},
+}
+
+// Create a handler
+handler := New(mockBroker)
+
+// Create a test server
+server := httptest.NewServer(handler)
+defer server.Close()
+
+// Create a WebSocket URL
+wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+
+// Test connecting to the WebSocket
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+
+conn, _, err := websocket.Dial(ctx, wsURL, nil)
+if err != nil {
+t.Fatalf("Error connecting to WebSocket: %v", err)
+}
+defer conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestHandler_Integration(t *testing.T) {
+// We're using the integration_test.go file for integration tests now
+t.Skip("Integration tests moved to integration_test.go")
+}
+
+```
+
+<a id="file-pkg-server-integration_test-go"></a>
+**File: pkg/server/integration_test.go**
+
+```go
 package server
 
 import (
@@ -4598,88 +5192,27 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/lightforgemedia/go-websocketmq/pkg/broker"
 	"github.com/lightforgemedia/go-websocketmq/pkg/broker/ps"
 	"github.com/lightforgemedia/go-websocketmq/pkg/model"
 	"nhooyr.io/websocket"
 )
 
-// MockBroker is a mock implementation of the broker.Broker interface
-type MockBroker struct {
-	PublishFunc   func(ctx context.Context, m *model.Message) error
-	SubscribeFunc func(ctx context.Context, topic string, fn broker.Handler) error
-	RequestFunc   func(ctx context.Context, req *model.Message, timeoutMs int64) (*model.Message, error)
-	CloseFunc     func() error
-}
-
-func (b *MockBroker) Publish(ctx context.Context, m *model.Message) error {
-	return b.PublishFunc(ctx, m)
-}
-
-func (b *MockBroker) Subscribe(ctx context.Context, topic string, fn broker.Handler) error {
-	return b.SubscribeFunc(ctx, topic, fn)
-}
-
-func (b *MockBroker) Request(ctx context.Context, req *model.Message, timeoutMs int64) (*model.Message, error) {
-	return b.RequestFunc(ctx, req, timeoutMs)
-}
-
-func (b *MockBroker) Close() error {
-	if b.CloseFunc != nil {
-		return b.CloseFunc()
-	}
-	return nil
-}
-
-func TestHandler_ServeHTTP(t *testing.T) {
-	// Create a mock broker
-	mockBroker := &MockBroker{
-		PublishFunc: func(ctx context.Context, m *model.Message) error {
-			return nil
-		},
-		SubscribeFunc: func(ctx context.Context, topic string, fn broker.Handler) error {
-			return nil
-		},
-		RequestFunc: func(ctx context.Context, req *model.Message, timeoutMs int64) (*model.Message, error) {
-			return nil, nil
-		},
-		CloseFunc: func() error {
-			return nil
-		},
-	}
-
-	// Create a handler
-	handler := New(mockBroker)
-
-	// Create a test server
-	server := httptest.NewServer(handler)
-	defer server.Close()
-
-	// Create a WebSocket URL
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-
-	// Connect to the WebSocket
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	conn, _, err := websocket.Dial(ctx, wsURL, nil)
-	if err != nil {
-		t.Fatalf("Error connecting to WebSocket: %v", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-}
-
-func TestHandler_Integration(t *testing.T) {
+// TestIntegration tests the WebSocket handler with a real PubSubBroker.
+func TestIntegration(t *testing.T) {
+	// Skip the test for now until we can fix the flakiness
 	t.Skip("Integration tests are flaky and need more work")
 
-	// Create a real PubSubBroker for testing
+	// Create a real PubSubBroker
 	broker := ps.New(128)
+	defer broker.Close()
 
-	// Create a handler
-	handler := New(broker)
+	// Create a handler with options
+	opts := DefaultOptions()
+	handler := New(broker, opts)
 
 	// Create a test server
 	server := httptest.NewServer(handler)
@@ -4688,21 +5221,46 @@ func TestHandler_Integration(t *testing.T) {
 	// Create a WebSocket URL
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
 
-	// Connect to the WebSocket
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	// Create a wait group to synchronize tests
+	var wg sync.WaitGroup
 
 	// Test 1: Connect to WebSocket
 	t.Run("Connect", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
 		conn, _, err := websocket.Dial(ctx, wsURL, nil)
 		if err != nil {
 			t.Fatalf("Error connecting to WebSocket: %v", err)
 		}
-		defer conn.Close(websocket.StatusNormalClosure, "")
+		conn.Close(websocket.StatusNormalClosure, "")
 	})
 
-	// Test 2: Send a message
-	t.Run("Send message", func(t *testing.T) {
+	// Test 2: Publish a message
+	t.Run("Publish", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// Create a channel to receive the message
+		receivedCh := make(chan *model.Message, 1)
+
+		// Add to wait group
+		wg.Add(1)
+
+		// Subscribe to the topic
+		err := broker.Subscribe(ctx, "test.topic", func(ctx context.Context, m *model.Message) (*model.Message, error) {
+			receivedCh <- m
+			wg.Done()
+			return nil, nil
+		})
+		if err != nil {
+			t.Fatalf("Error subscribing to topic: %v", err)
+		}
+
+		// Wait a bit to ensure the subscription is set up
+		time.Sleep(100 * time.Millisecond)
+
+		// Connect to the WebSocket
 		conn, _, err := websocket.Dial(ctx, wsURL, nil)
 		if err != nil {
 			t.Fatalf("Error connecting to WebSocket: %v", err)
@@ -4734,135 +5292,42 @@ func TestHandler_Integration(t *testing.T) {
 			t.Fatalf("Error sending message: %v", err)
 		}
 
-		// Wait for a response (we're not actually expecting one in this test)
-		time.Sleep(200 * time.Millisecond)
-	})
-
-	// Test 3: Subscribe to a topic and receive a message
-	t.Run("Subscribe and receive", func(t *testing.T) {
-		// Create a channel to signal when the test is done
-		done := make(chan struct{})
-
-		// Create a connection for subscribing
-		conn, _, err := websocket.Dial(ctx, wsURL, nil)
-		if err != nil {
-			t.Fatalf("Error connecting to WebSocket: %v", err)
-		}
-		defer conn.Close(websocket.StatusNormalClosure, "")
-
-		// Subscribe to a topic
-		subscribeMsg := &model.Message{
-			Header: model.MessageHeader{
-				MessageID: "sub-123",
-				Type:      "subscribe",
-				Topic:     "test.topic",
-				Timestamp: time.Now().UnixMilli(),
-			},
-			Body: nil,
-		}
-
-		// Marshal the message to JSON
-		data, err := json.Marshal(subscribeMsg)
-		if err != nil {
-			t.Fatalf("Error marshaling message: %v", err)
-		}
-
-		// Send the subscription message
-		err = conn.Write(ctx, websocket.MessageText, data)
-		if err != nil {
-			t.Fatalf("Error sending subscription message: %v", err)
-		}
-
-		// Wait for the subscription acknowledgment
-		_, data, err = conn.Read(ctx)
-		if err != nil {
-			t.Fatalf("Error reading subscription acknowledgment: %v", err)
-		}
-
-		// Unmarshal the response
-		var subResponse model.Message
-		err = json.Unmarshal(data, &subResponse)
-		if err != nil {
-			t.Fatalf("Error unmarshaling subscription response: %v", err)
-		}
-
-		// Verify the subscription response
-		if subResponse.Header.Type != "response" {
-			t.Fatalf("Expected response type 'response', got '%s'", subResponse.Header.Type)
-		}
-
-		// Start a goroutine to read the published message
+		// Wait for the message to be received
+		waitCh := make(chan struct{})
 		go func() {
-			// Wait for the published message
-			_, msgData, err := conn.Read(ctx)
-			if err != nil {
-				t.Errorf("Error reading published message: %v", err)
-				close(done)
-				return
-			}
-
-			// Unmarshal the message
-			var pubMsg model.Message
-			err = json.Unmarshal(msgData, &pubMsg)
-			if err != nil {
-				t.Errorf("Error unmarshaling published message: %v", err)
-				close(done)
-				return
-			}
-
-			// Verify the published message
-			if pubMsg.Header.Topic != "test.topic" {
-				t.Errorf("Expected topic 'test.topic', got '%s'", pubMsg.Header.Topic)
-			}
-
-			close(done)
+			wg.Wait()
+			close(waitCh)
 		}()
 
-		// Create a second connection for publishing
-		pubConn, _, err := websocket.Dial(ctx, wsURL, nil)
-		if err != nil {
-			t.Fatalf("Error connecting to WebSocket for publishing: %v", err)
-		}
-		defer pubConn.Close(websocket.StatusNormalClosure, "")
-
-		// Create a message to publish
-		pubMsg := &model.Message{
-			Header: model.MessageHeader{
-				MessageID: "pub-123",
-				Type:      "event",
-				Topic:     "test.topic",
-				Timestamp: time.Now().UnixMilli(),
-			},
-			Body: map[string]any{
-				"key": "value",
-			},
-		}
-
-		// Marshal the message to JSON
-		pubData, err := json.Marshal(pubMsg)
-		if err != nil {
-			t.Fatalf("Error marshaling publish message: %v", err)
-		}
-
-		// Publish the message
-		err = pubConn.Write(ctx, websocket.MessageText, pubData)
-		if err != nil {
-			t.Fatalf("Error publishing message: %v", err)
-		}
-
-		// Wait for the test to complete or timeout
 		select {
-		case <-done:
-			// Test completed successfully
+		case <-waitCh:
+			// Message received
+			select {
+			case receivedMsg := <-receivedCh:
+				if receivedMsg.Header.Topic != "test.topic" {
+					t.Fatalf("Expected topic %s, got %s", "test.topic", receivedMsg.Header.Topic)
+				}
+			default:
+				t.Fatal("Message not received in channel")
+			}
 		case <-time.After(2 * time.Second):
-			t.Fatal("Timed out waiting for published message")
+			t.Fatal("Timed out waiting for message")
 		}
 	})
 
-	// Test 4: Send a request and get a response
-	t.Run("Request-response", func(t *testing.T) {
-		// First, set up a handler for the request
+	// Test 3: Request-Response
+	t.Run("Request-Response", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// Create a channel to signal when the handler is called
+		handlerCalled := make(chan struct{})
+
+		// Set up a handler for the request
 		err := broker.Subscribe(ctx, "test.request", func(ctx context.Context, m *model.Message) (*model.Message, error) {
+			// Signal that the handler was called
+			close(handlerCalled)
+
 			// Create a response message
 			return &model.Message{
 				Header: model.MessageHeader{
@@ -4881,7 +5346,10 @@ func TestHandler_Integration(t *testing.T) {
 			t.Fatalf("Error subscribing to request topic: %v", err)
 		}
 
-		// Create a connection for the request
+		// Wait a bit to ensure the subscription is set up
+		time.Sleep(100 * time.Millisecond)
+
+		// Connect to the WebSocket
 		conn, _, err := websocket.Dial(ctx, wsURL, nil)
 		if err != nil {
 			t.Fatalf("Error connecting to WebSocket: %v", err)
@@ -4915,9 +5383,17 @@ func TestHandler_Integration(t *testing.T) {
 			t.Fatalf("Error sending request message: %v", err)
 		}
 
+		// Wait for the handler to be called
+		select {
+		case <-handlerCalled:
+			// Handler was called
+		case <-time.After(2 * time.Second):
+			t.Fatal("Timed out waiting for handler to be called")
+		}
+
 		// Wait for a response with a timeout
-		responseCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		defer cancel()
+		responseCtx, responseCancel := context.WithTimeout(ctx, 2*time.Second)
+		defer responseCancel()
 
 		_, data, err = conn.Read(responseCtx)
 		if err != nil {
@@ -4939,24 +5415,6 @@ func TestHandler_Integration(t *testing.T) {
 			t.Fatalf("Expected correlation ID '%s', got '%s'", requestMsg.Header.CorrelationID, response.Header.CorrelationID)
 		}
 	})
-}
-
-```
-
-<a id="file-pkg-server-integration_test-go"></a>
-**File: pkg/server/integration_test.go**
-
-```go
-package server
-
-import (
-	"testing"
-)
-
-// TestIntegration tests the WebSocket handler with a real PubSubBroker.
-func TestIntegration(t *testing.T) {
-	// Skip the test for now
-	t.Skip("Integration tests are flaky and need more work")
 }
 
 ```
@@ -5210,79 +5668,6 @@ func TestSimpleHandler(t *testing.T) {
 
 ```
 
-<a id="file-scripts-build-js-sh"></a>
-**File: scripts/build-js.sh**
-
-```sh
-#!/bin/bash
-set -e
-
-# Get the root directory of the project
-ROOT_DIR=$(pwd)
-
-# Source and destination paths
-SRC_PATH="$ROOT_DIR/client/src/client.js"
-DIST_DIR="$ROOT_DIR/dist"
-FULL_JS_PATH="$DIST_DIR/websocketmq.js"
-MIN_JS_PATH="$DIST_DIR/websocketmq.min.js"
-
-# Ensure dist directory exists
-mkdir -p "$DIST_DIR"
-
-# Copy the full JS file
-cp "$SRC_PATH" "$FULL_JS_PATH"
-
-# Minify the JS file using minify tool
-minify -o "$MIN_JS_PATH" "$SRC_PATH"
-
-# Print success message
-SRC_SIZE=$(wc -c < "$SRC_PATH")
-MIN_SIZE=$(wc -c < "$MIN_JS_PATH")
-REDUCTION=$((100 - (MIN_SIZE * 100 / SRC_SIZE)))
-
-echo "JavaScript build complete:"
-echo "  Source:   $SRC_PATH ($SRC_SIZE bytes)"
-echo "  Full:     $FULL_JS_PATH ($SRC_SIZE bytes)"
-echo "  Minified: $MIN_JS_PATH ($MIN_SIZE bytes, $REDUCTION% reduction)"
-
-```
-
-<a id="file-scripts-extract-files-js"></a>
-**File: scripts/extract-files.js**
-
-```javascript
-const fs = require('fs');
-const path = require('path');
-
-// Read the markdown file
-const markdownPath = path.join(__dirname, '../docs/2025-05-04/01.md');
-const markdownContent = fs.readFileSync(markdownPath, 'utf8');
-
-// Regular expression to extract file definitions
-const fileRegex = /__File: ([^_]+)__\n```(?:[^\n]*)\n([\s\S]*?)```/g;
-
-// Process each file match
-let match;
-while ((match = fileRegex.exec(markdownContent)) !== null) {
-  const filePath = match[1].trim();
-  const fileContent = match[2];
-  
-  // Create the directory structure if it doesn't exist
-  const dirPath = path.dirname(filePath);
-  if (dirPath !== '.' && !fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
-    console.log(`Created directory: ${dirPath}`);
-  }
-  
-  // Write the file
-  fs.writeFileSync(filePath, fileContent);
-  console.log(`Created file: ${filePath}`);
-}
-
-console.log('File extraction complete!');
-
-```
-
 <a id="file-websocketmq-go"></a>
 **File: websocketmq.go**
 
@@ -5395,7 +5780,11 @@ func NewNATSBroker(logger Logger, opts NATSBrokerOptions) (broker.Broker, error)
 // NewHandler creates a new WebSocket handler that upgrades HTTP connections to WebSocket
 // and handles message routing through the provided broker.
 func NewHandler(b broker.Broker, logger Logger, opts HandlerOptions) http.Handler {
-	return server.New(b)
+	serverOpts := server.Options{
+		MaxMessageSize: opts.MaxMessageSize,
+		AllowedOrigins: opts.AllowedOrigins,
+	}
+	return server.New(b, serverOpts)
 }
 
 // Message is a convenience type alias for model.Message
