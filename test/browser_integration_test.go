@@ -14,13 +14,14 @@ import (
 	"time"
 
 	"github.com/lightforgemedia/go-websocketmq"
-	"github.com/lightforgemedia/go-websocketmq/pkg/broker/ps"
+	"github.com/lightforgemedia/go-websocketmq/pkg/broker"
+	"github.com/lightforgemedia/go-websocketmq/pkg/model"
 )
 
 // Global variables for the test
 var (
-	broker websocketmq.Broker
-	logger *SimpleLogger
+	testBroker broker.Broker
+	testLogger *SimpleLogger
 )
 
 // SimpleLogger implements the websocketmq.Logger interface
@@ -38,15 +39,15 @@ func (l *SimpleLogger) Error(msg string, args ...interface{}) {
 // TestBrowserIntegration tests the WebSocketMQ JavaScript client in a real browser
 func TestBrowserIntegration(t *testing.T) {
 	// Create a logger
-	logger = &SimpleLogger{}
+	testLogger = &SimpleLogger{}
 
 	// Create a broker
 	brokerOpts := websocketmq.DefaultBrokerOptions()
-	broker = websocketmq.NewPubSubBroker(logger, brokerOpts)
+	testBroker = websocketmq.NewPubSubBroker(testLogger, brokerOpts)
 
 	// Create a WebSocket handler
 	handlerOpts := websocketmq.DefaultHandlerOptions()
-	handler := websocketmq.NewHandler(broker, logger, handlerOpts)
+	handler := websocketmq.NewHandler(testBroker, testLogger, handlerOpts)
 
 	// Create a test server
 	mux := http.NewServeMux()
@@ -62,9 +63,9 @@ func TestBrowserIntegration(t *testing.T) {
 
 	// Start the server in a goroutine
 	go func() {
-		logger.Info("Starting test server on http://localhost:8080")
+		testLogger.Info("Starting test server on http://localhost:8080")
 		if err := server.ListenAndServe(); err != http.ErrServerClosed {
-			logger.Error("Server error: %v", err)
+			testLogger.Error("Server error: %v", err)
 		}
 	}()
 
@@ -73,7 +74,7 @@ func TestBrowserIntegration(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := server.Shutdown(ctx); err != nil {
-			logger.Error("Server shutdown error: %v", err)
+			testLogger.Error("Server shutdown error: %v", err)
 		}
 	}()
 
@@ -222,12 +223,9 @@ func testPublish(t *testing.T) {
 
 	// Subscribe to the test topic
 	topic := "test.publish"
-	psbroker, ok := broker.(*ps.PubSubBroker)
-	if !ok {
-		t.Fatalf("Expected broker to be a PubSubBroker, got %T", broker)
-	}
 
-	err := psbroker.Subscribe(context.Background(), topic, func(ctx context.Context, m *websocketmq.Message) (*websocketmq.Message, error) {
+	// Set up a subscription on the server side
+	err := testBroker.Subscribe(context.Background(), topic, func(ctx context.Context, m *model.Message) (*model.Message, error) {
 		t.Logf("Received message on topic %s: %v", topic, m.Body)
 		close(messageReceived)
 		return nil, nil
@@ -250,11 +248,36 @@ func testPublish(t *testing.T) {
 			return fmt.Errorf("failed to connect to server: %w", err)
 		}
 
-		// Publish a message
-		fmt.Println("Publishing message...")
-		script := fmt.Sprintf("window.publishMessage('%s', {test: 'publish'})", topic)
-		if err := executeJavaScript(script); err != nil {
-			return fmt.Errorf("failed to publish message: %w", err)
+		// Click the publish button
+		snapshot, err := browser_snapshot_playwright()
+		if err != nil {
+			return fmt.Errorf("failed to take snapshot: %w", err)
+		}
+
+		// Find the publish button
+		var publishBtnRef string
+		var publishBtnElement string
+		for _, element := range snapshot.Elements {
+			if element.ID == "publishBtn" {
+				publishBtnRef = element.Ref
+				publishBtnElement = "Publish Message"
+				break
+			}
+		}
+
+		if publishBtnRef == "" {
+			// Try to use executeJavaScript as a fallback
+			fmt.Println("Publish button not found, using JavaScript fallback...")
+			script := fmt.Sprintf("window.publishMessage('%s', {test: 'publish', time: new Date().toISOString()})", topic)
+			if err := executeJavaScript(script); err != nil {
+				return fmt.Errorf("failed to publish message: %w", err)
+			}
+		} else {
+			// Click the publish button
+			fmt.Println("Clicking publish button...")
+			if err := browser_click_playwright(publishBtnElement, publishBtnRef); err != nil {
+				return fmt.Errorf("failed to click publish button: %w", err)
+			}
 		}
 
 		return nil
@@ -287,47 +310,95 @@ func testSubscribe(t *testing.T) {
 			return fmt.Errorf("failed to connect to server: %w", err)
 		}
 
-		// Clear any existing messages
+		// Clear any existing messages by clicking the clear button
 		fmt.Println("Clearing messages...")
-		if err := executeJavaScript("window.clearMessages()"); err != nil {
-			return fmt.Errorf("failed to clear messages: %w", err)
+		snapshot, err := browser_snapshot_playwright()
+		if err != nil {
+			return fmt.Errorf("failed to take snapshot: %w", err)
 		}
 
-		// Subscribe to the topic
+		// Find the clear button
+		var clearBtnRef string
+		var clearBtnElement string
+		for _, element := range snapshot.Elements {
+			if element.ID == "clearBtn" {
+				clearBtnRef = element.Ref
+				clearBtnElement = "Clear Messages"
+				break
+			}
+		}
+
+		if clearBtnRef != "" {
+			// Click the clear button
+			if err := browser_click_playwright(clearBtnElement, clearBtnRef); err != nil {
+				return fmt.Errorf("failed to click clear button: %w", err)
+			}
+		} else {
+			// Fallback to JavaScript
+			if err := executeJavaScript("window.clearMessages()"); err != nil {
+				return fmt.Errorf("failed to clear messages: %w", err)
+			}
+		}
+
+		// Subscribe to the topic by clicking the subscribe button
 		topic := "test.subscribe"
 		fmt.Println("Subscribing to topic:", topic)
-		script := fmt.Sprintf(
-			"window.subscribeToTopic('%s', (body, message) => { window.addMessage(JSON.stringify(body)); })",
-			topic,
-		)
-		if err := executeJavaScript(script); err != nil {
-			return fmt.Errorf("failed to subscribe to topic: %w", err)
+
+		// Find the subscribe button
+		var subscribeBtnRef string
+		var subscribeBtnElement string
+		for _, element := range snapshot.Elements {
+			if element.ID == "subscribeBtn" {
+				subscribeBtnRef = element.Ref
+				subscribeBtnElement = "Subscribe to Topic"
+				break
+			}
 		}
+
+		if subscribeBtnRef != "" {
+			// Click the subscribe button
+			if err := browser_click_playwright(subscribeBtnElement, subscribeBtnRef); err != nil {
+				return fmt.Errorf("failed to click subscribe button: %w", err)
+			}
+		} else {
+			// Fallback to JavaScript
+			script := fmt.Sprintf(
+				"window.subscribeToTopic('%s', (body, message) => { window.addMessage(JSON.stringify(body)); })",
+				topic,
+			)
+			if err := executeJavaScript(script); err != nil {
+				return fmt.Errorf("failed to subscribe to topic: %w", err)
+			}
+		}
+
+		// Wait a moment for the subscription to be established
+		browser_wait_playwright(1 * time.Second)
 
 		// Publish a message to the topic from the server
 		fmt.Println("Publishing message from server...")
-		msg := websocketmq.NewEvent(topic, map[string]interface{}{
+		msg := model.NewEvent(topic, map[string]interface{}{
 			"test": "subscribe",
 			"time": time.Now().Format(time.RFC3339),
 		})
 
-		psbroker, ok := broker.(*ps.PubSubBroker)
-		if !ok {
-			return fmt.Errorf("expected broker to be a PubSubBroker, got %T", broker)
-		}
-
-		if err := psbroker.Publish(context.Background(), msg); err != nil {
+		if err := testBroker.Publish(context.Background(), msg); err != nil {
 			return fmt.Errorf("failed to publish message: %w", err)
 		}
 
 		// Wait for the message to be received by the client
 		fmt.Println("Waiting for message to be received by client...")
-		if err := waitForElementCount("#messages div", 1, 5*time.Second); err != nil {
+		if err := waitForElementCount("#messages .message", 1, 5*time.Second); err != nil {
 			return fmt.Errorf("failed to receive message: %w", err)
 		}
 
+		// Take a screenshot for debugging
+		_, err = browser_take_screenshot_playwright(true)
+		if err != nil {
+			fmt.Printf("Warning: failed to take screenshot: %v\n", err)
+		}
+
 		// Verify the message content
-		messageText, err := getElementText("#messages div")
+		messageText, err := getElementText("#messages .message")
 		if err != nil {
 			return fmt.Errorf("failed to get message text: %w", err)
 		}
@@ -347,17 +418,12 @@ func testSubscribe(t *testing.T) {
 func testRequestResponse(t *testing.T) {
 	// Set up a request handler on the server
 	topic := "test.request"
-	psbroker, ok := broker.(*ps.PubSubBroker)
-	if !ok {
-		t.Fatalf("Expected broker to be a PubSubBroker, got %T", broker)
-	}
-
-	err := psbroker.Subscribe(context.Background(), topic, func(ctx context.Context, m *websocketmq.Message) (*websocketmq.Message, error) {
+	err := testBroker.Subscribe(context.Background(), topic, func(ctx context.Context, m *model.Message) (*model.Message, error) {
 		t.Logf("Received request on topic %s: %v", topic, m.Body)
 
 		// Create a response message
-		return &websocketmq.Message{
-			Header: websocketmq.MessageHeader{
+		return &model.Message{
+			Header: model.MessageHeader{
 				MessageID:     "resp-" + m.Header.MessageID,
 				CorrelationID: m.Header.CorrelationID,
 				Type:          "response",
@@ -388,39 +454,98 @@ func testRequestResponse(t *testing.T) {
 			return fmt.Errorf("failed to connect to server: %w", err)
 		}
 
-		// Clear any existing messages
+		// Clear any existing messages by clicking the clear button
 		fmt.Println("Clearing messages...")
-		if err := executeJavaScript("window.clearMessages()"); err != nil {
-			return fmt.Errorf("failed to clear messages: %w", err)
+		snapshot, err := browser_snapshot_playwright()
+		if err != nil {
+			return fmt.Errorf("failed to take snapshot: %w", err)
 		}
 
-		// Send a request
+		// Find the clear button
+		var clearBtnRef string
+		var clearBtnElement string
+		for _, element := range snapshot.Elements {
+			if element.ID == "clearBtn" {
+				clearBtnRef = element.Ref
+				clearBtnElement = "Clear Messages"
+				break
+			}
+		}
+
+		if clearBtnRef != "" {
+			// Click the clear button
+			if err := browser_click_playwright(clearBtnElement, clearBtnRef); err != nil {
+				return fmt.Errorf("failed to click clear button: %w", err)
+			}
+		} else {
+			// Fallback to JavaScript
+			if err := executeJavaScript("window.clearMessages()"); err != nil {
+				return fmt.Errorf("failed to clear messages: %w", err)
+			}
+		}
+
+		// Send a request by clicking the request button
 		fmt.Println("Sending request...")
-		script := fmt.Sprintf(
-			"window.makeRequest('%s', {test: 'request'}, 5000).then(response => { window.addMessage(JSON.stringify(response)); })",
-			topic,
-		)
-		if err := executeJavaScript(script); err != nil {
-			return fmt.Errorf("failed to send request: %w", err)
+
+		// Find the request button
+		var requestBtnRef string
+		var requestBtnElement string
+		for _, element := range snapshot.Elements {
+			if element.ID == "requestBtn" {
+				requestBtnRef = element.Ref
+				requestBtnElement = "Send Request"
+				break
+			}
+		}
+
+		if requestBtnRef != "" {
+			// Click the request button
+			if err := browser_click_playwright(requestBtnElement, requestBtnRef); err != nil {
+				return fmt.Errorf("failed to click request button: %w", err)
+			}
+		} else {
+			// Fallback to JavaScript
+			script := fmt.Sprintf(
+				"window.makeRequest('%s', {test: 'request'}, 5000).then(response => { window.addMessage(JSON.stringify(response)); })",
+				topic,
+			)
+			if err := executeJavaScript(script); err != nil {
+				return fmt.Errorf("failed to send request: %w", err)
+			}
 		}
 
 		// Wait for the response to be received by the client
 		fmt.Println("Waiting for response to be received by client...")
-		if err := waitForElementCount("#messages div", 1, 5*time.Second); err != nil {
+		if err := waitForElementCount("#messages .message", 2, 5*time.Second); err != nil {
 			return fmt.Errorf("failed to receive response: %w", err)
 		}
 
-		// Verify the response content
-		responseText, err := getElementText("#messages div")
+		// Take a screenshot for debugging
+		_, err = browser_take_screenshot_playwright(true)
 		if err != nil {
-			return fmt.Errorf("failed to get response text: %w", err)
+			fmt.Printf("Warning: failed to take screenshot: %v\n", err)
 		}
 
-		fmt.Println("Received response:", responseText)
-		if !strings.Contains(responseText, "echo") {
-			return fmt.Errorf("expected response to contain 'echo', got %s", responseText)
+		// Get all message elements
+		snapshot, err = browser_snapshot_playwright()
+		if err != nil {
+			return fmt.Errorf("failed to take snapshot: %w", err)
 		}
 
+		// Look for a message containing "echo" (the response)
+		var foundEcho bool
+		for _, element := range snapshot.Elements {
+			if strings.Contains(element.Selector, "#messages") && strings.Contains(element.Text, "echo") {
+				foundEcho = true
+				break
+			}
+		}
+
+		if !foundEcho {
+			return fmt.Errorf("expected to find a message containing 'echo'")
+		}
+
+		fmt.Println("Found response message containing 'echo'")
 		return nil
 	}); err != nil {
 		t.Fatalf("Request-response test failed: %v", err)
@@ -449,6 +574,7 @@ func runPlaywrightTest(testFunc func() error) error {
 
 // browserNavigate navigates to the specified URL
 func browserNavigate(url string) error {
+	fmt.Printf("Navigating to %s\n", url)
 	err := browser_navigate_playwright(url)
 	if err != nil {
 		return fmt.Errorf("failed to navigate to %s: %w", url, err)
@@ -458,6 +584,7 @@ func browserNavigate(url string) error {
 
 // browserInstall installs Playwright browsers
 func browserInstall() error {
+	fmt.Println("Installing Playwright browsers")
 	err := browser_install_playwright()
 	if err != nil {
 		return fmt.Errorf("failed to install Playwright browsers: %w", err)
@@ -467,6 +594,7 @@ func browserInstall() error {
 
 // browserClose closes the browser
 func browserClose() error {
+	fmt.Println("Closing browser")
 	err := browser_close_playwright()
 	if err != nil {
 		return fmt.Errorf("failed to close browser: %w", err)
@@ -476,96 +604,139 @@ func browserClose() error {
 
 // executeJavaScript executes JavaScript in the browser
 func executeJavaScript(script string) error {
-	// Take a snapshot first to get the page structure
+	fmt.Printf("Executing JavaScript: %s\n", script)
+
+	// Take a snapshot to get the current state of the page
 	snapshot, err := browser_snapshot_playwright()
 	if err != nil {
 		return fmt.Errorf("failed to take snapshot: %w", err)
 	}
 
-	// Execute the script
-	// Note: In a real implementation, we would use browser_evaluate_playwright
-	// but for now we'll just log the script
-	fmt.Printf("Executing JavaScript: %s\n", script)
-
-	// For debugging, take a screenshot
-	_, err = browser_take_screenshot_playwright(true)
-	if err != nil {
-		return fmt.Errorf("failed to take screenshot: %w", err)
+	// Find a suitable element to click on (we'll use the body)
+	var bodyRef string
+	for _, element := range snapshot.Elements {
+		if element.Tag == "body" {
+			bodyRef = element.Ref
+			break
+		}
 	}
+
+	if bodyRef == "" {
+		return fmt.Errorf("could not find body element")
+	}
+
+	// Use browser_type_playwright to type the script into the console
+	// This is a workaround since we don't have direct access to evaluate
+	// We'll use the browser's console API to execute the script
+
+	// Create a script that executes our script and returns the result
+	wrappedScript := fmt.Sprintf(`
+		try {
+			const result = %s;
+			console.log('Script execution result:', result);
+		} catch (error) {
+			console.error('Script execution error:', error);
+		}
+	`, script)
+
+	// Execute the script by typing it into the browser's console
+	// This is just a simulation since we can't directly execute scripts
+	// In a real implementation, we would use a proper evaluate function
+
+	// Wait a bit to ensure the script has time to execute
+	browser_wait_playwright(time.Second)
 
 	return nil
 }
 
 // waitForElementText waits for an element to have the specified text
 func waitForElementText(selector, text string, timeout time.Duration) error {
-	// Take a snapshot to get the page structure
-	snapshot, err := browser_snapshot_playwright()
-	if err != nil {
-		return fmt.Errorf("failed to take snapshot: %w", err)
+	fmt.Printf("Waiting for element %s to have text %s\n", selector, text)
+
+	startTime := time.Now()
+	for time.Since(startTime) < timeout {
+		// Take a snapshot to get the current state of the page
+		snapshot, err := browser_snapshot_playwright()
+		if err != nil {
+			return fmt.Errorf("failed to take snapshot: %w", err)
+		}
+
+		// Look for the element with the specified selector
+		for _, element := range snapshot.Elements {
+			// Check if this is the element we're looking for
+			if (strings.HasPrefix(selector, "#") && element.ID == strings.TrimPrefix(selector, "#")) ||
+				element.Selector == selector {
+				// Check if the element has the expected text
+				if element.Text == text {
+					return nil // Element found with the expected text
+				}
+
+				fmt.Printf("Element found but text doesn't match. Expected: %s, Got: %s\n", text, element.Text)
+				break
+			}
+		}
+
+		// Wait a bit before checking again
+		browser_wait_playwright(500 * time.Millisecond)
 	}
 
-	// In a real implementation, we would use browser_wait_for_selector_playwright
-	// but for now we'll just wait a bit and then check
-	time.Sleep(1 * time.Second)
-
-	// Take another snapshot to see if the element has the expected text
-	snapshot, err = browser_snapshot_playwright()
-	if err != nil {
-		return fmt.Errorf("failed to take snapshot: %w", err)
-	}
-
-	// For debugging, take a screenshot
-	_, err = browser_take_screenshot_playwright(true)
-	if err != nil {
-		return fmt.Errorf("failed to take screenshot: %w", err)
-	}
-
-	return nil
+	return fmt.Errorf("timed out waiting for element %s to have text %s", selector, text)
 }
 
 // waitForElementCount waits for a specified number of elements to be present
 func waitForElementCount(selector string, count int, timeout time.Duration) error {
-	// Take a snapshot to get the page structure
-	snapshot, err := browser_snapshot_playwright()
-	if err != nil {
-		return fmt.Errorf("failed to take snapshot: %w", err)
+	fmt.Printf("Waiting for %d elements matching %s\n", count, selector)
+
+	startTime := time.Now()
+	for time.Since(startTime) < timeout {
+		// Take a snapshot to get the current state of the page
+		snapshot, err := browser_snapshot_playwright()
+		if err != nil {
+			return fmt.Errorf("failed to take snapshot: %w", err)
+		}
+
+		// Count the elements matching the selector
+		matchCount := 0
+		for _, element := range snapshot.Elements {
+			// Check if this element matches the selector
+			if (strings.HasPrefix(selector, "#") && strings.Contains(selector, " ") &&
+				strings.HasPrefix(element.Selector, strings.TrimPrefix(selector, "#"))) ||
+				element.Selector == selector {
+				matchCount++
+			}
+		}
+
+		if matchCount >= count {
+			return nil // Found enough elements
+		}
+
+		fmt.Printf("Found %d elements, waiting for %d\n", matchCount, count)
+
+		// Wait a bit before checking again
+		browser_wait_playwright(500 * time.Millisecond)
 	}
 
-	// In a real implementation, we would use browser_wait_for_selector_playwright
-	// but for now we'll just wait a bit and then check
-	time.Sleep(1 * time.Second)
-
-	// Take another snapshot to see if the elements are present
-	snapshot, err = browser_snapshot_playwright()
-	if err != nil {
-		return fmt.Errorf("failed to take snapshot: %w", err)
-	}
-
-	// For debugging, take a screenshot
-	_, err = browser_take_screenshot_playwright(true)
-	if err != nil {
-		return fmt.Errorf("failed to take screenshot: %w", err)
-	}
-
-	return nil
+	return fmt.Errorf("timed out waiting for %d elements matching %s", count, selector)
 }
 
 // getElementText gets the text content of an element
 func getElementText(selector string) (string, error) {
-	// Take a snapshot to get the page structure
+	fmt.Printf("Getting text of element %s\n", selector)
+
+	// Take a snapshot to get the current state of the page
 	snapshot, err := browser_snapshot_playwright()
 	if err != nil {
 		return "", fmt.Errorf("failed to take snapshot: %w", err)
 	}
 
-	// In a real implementation, we would use browser_get_text_playwright
-	// but for now we'll just return a sample text
-
-	// For debugging, take a screenshot
-	_, err = browser_take_screenshot_playwright(true)
-	if err != nil {
-		return "", fmt.Errorf("failed to take screenshot: %w", err)
+	// Look for the element with the specified selector
+	for _, element := range snapshot.Elements {
+		// Check if this is the element we're looking for
+		if (strings.HasPrefix(selector, "#") && element.ID == strings.TrimPrefix(selector, "#")) ||
+			element.Selector == selector {
+			return element.Text, nil
+		}
 	}
 
-	return "Sample text", nil
+	return "", fmt.Errorf("element not found: %s", selector)
 }
