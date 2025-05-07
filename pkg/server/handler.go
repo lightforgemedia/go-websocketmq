@@ -45,7 +45,7 @@ type Handler struct {
 	opts   HandlerOptions
 	// activeBrokerClientIDs is used to prevent duplicate registration if a client sends multiple register messages
 	// This is a simple mechanism; a more robust one might involve a per-connection state.
-	activeBrokerClientIDs sync.Map 
+	activeBrokerClientIDs sync.Map
 }
 
 // NewHandler creates a new WebSocket handler.
@@ -82,8 +82,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate a unique ID for this server-side representation of the client connection
-	brokerClientID := fmt.Sprintf("wsconn-%s", model.Message{}.Header.MessageID) // Leverage existing randomID via empty message
-	
+	brokerClientID := fmt.Sprintf("wsconn-%s", model.RandomID())
+
 	h.logger.Info("WebSocket client connected: %s, assigned BrokerClientID: %s", r.RemoteAddr, brokerClientID)
 
 	connAdapter := newWSConnectionAdapter(conn, brokerClientID, h.opts.WriteTimeout, h.logger)
@@ -104,11 +104,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	ctx := r.Context() // Use request context for connection lifetime
-	h.handleMessages(ctx, conn, brokerClientID)
+	h.handleMessages(ctx, connAdapter, brokerClientID)
 }
 
 // handleMessages reads and processes messages from a single WebSocket connection.
-func (h *Handler) handleMessages(ctx context.Context, conn *websocket.Conn, brokerClientID string) {
+func (h *Handler) handleMessages(ctx context.Context, connAdapter *wsConnectionAdapter, brokerClientID string) {
+	conn := connAdapter.conn
 	for {
 		msgType, data, err := conn.Read(ctx)
 		if err != nil {
@@ -142,12 +143,51 @@ func (h *Handler) handleMessages(ctx context.Context, conn *websocket.Conn, brok
 
 		// Handle different message types
 		switch msg.Header.Type {
-		case "event":
-			// Publish event to the broker
+		case model.KindEvent:
+			// Special handling for client session registration
+			if msg.Header.Topic == h.opts.ClientRegisterTopic {
+				bodyMap, ok := msg.Body.(map[string]interface{}) // JS sends JSON objects
+				if !ok {
+					h.logger.Error("Invalid registration message body from client %s: not a map. Body: %+v", brokerClientID, msg.Body)
+					break // break from switch case
+				}
+				pageSessionID, psOk := bodyMap["pageSessionID"].(string)
+				if !psOk || pageSessionID == "" {
+					h.logger.Error("Invalid registration message from client %s: missing or empty pageSessionID. Body: %+v", brokerClientID, bodyMap)
+					break // break from switch case
+				}
+
+				// Publish internal event for SessionManager
+				registrationEvent := model.NewEvent(broker.TopicClientRegistered, map[string]string{
+					"pageSessionID":  pageSessionID,
+					"brokerClientID": brokerClientID,
+				})
+				if err := h.broker.Publish(context.Background(), registrationEvent); err != nil { // Use background context for internal event
+					h.logger.Error("Failed to publish client registration event for %s (page %s): %v", brokerClientID, pageSessionID, err)
+				} else {
+					h.logger.Info("Client %s (page %s) registration event published.", brokerClientID, pageSessionID)
+				}
+
+				// Send an acknowledgment back to the client with its BrokerClientID.
+				// The client JS is set up to listen on broker.TopicClientRegistered for this.
+				ackMsg := model.NewEvent(broker.TopicClientRegistered, map[string]string{ // Send as map[string]string
+					"brokerClientID": brokerClientID,
+					"pageSessionID":  pageSessionID, // Echo back for confirmation
+					"status":         "registered",
+				})
+				if err := connAdapter.WriteMessage(ctx, ackMsg); err != nil {
+					h.logger.Error("Failed to send registration ack to client %s: %v", brokerClientID, err)
+				} else {
+					h.logger.Info("Sent registration ack with BrokerClientID %s to client %s (page %s)", brokerClientID, brokerClientID, pageSessionID)
+				}
+				break // break from switch, registration handled.
+			}
+
+			// Regular event processing
 			if err := h.broker.Publish(ctx, &msg); err != nil {
 				h.logger.Error("Failed to publish event from client %s: %v", brokerClientID, err)
 			}
-		case "request":
+		case model.KindRequest:
 			// This is a client-initiated request to a server-side handler.
 			// The server-side handler is subscribed via broker.Subscribe().
 			// The response from that handler will be sent back via its return value.
@@ -174,7 +214,9 @@ func (h *Handler) handleMessages(ctx context.Context, conn *websocket.Conn, brok
 					h.logger.Error("Failed to publish client request %s to broker: %v", brokerClientID, err)
 					// Attempt to send an error response directly back if publishing fails
 					errMsg := model.NewErrorMessage(&requestMsg, map[string]string{"error": "server failed to process request"})
-					if connAdapter, ok := h.broker.(interface{ GetConnection(string) (broker.ConnectionWriter, bool) }); ok {
+					if connAdapter, ok := h.broker.(interface {
+						GetConnection(string) (broker.ConnectionWriter, bool)
+					}); ok {
 						if clientConn, found := connAdapter.GetConnection(brokerClientID); found {
 							clientConn.WriteMessage(ctx, errMsg)
 						}
@@ -182,7 +224,7 @@ func (h *Handler) handleMessages(ctx context.Context, conn *websocket.Conn, brok
 				}
 			}(msg)
 
-		case "response", "error":
+		case model.KindResponse, model.KindError:
 			// This is a response from the client to a server-initiated request.
 			// The message's Topic should be the CorrelationID of the original server request.
 			// Publish it so the waiting RequestToClient call can pick it up.
@@ -214,32 +256,7 @@ func (h *Handler) handleMessages(ctx context.Context, conn *websocket.Conn, brok
 			// }
 
 		default:
-			// Handle client registration messages
-			if msg.Header.Topic == h.opts.ClientRegisterTopic {
-				bodyMap, ok := msg.Body.(map[string]interface{})
-				if !ok {
-					h.logger.Error("Invalid registration message body from client %s: not a map. Body: %+v", brokerClientID, msg.Body)
-					continue
-				}
-				pageSessionID, ok := bodyMap["pageSessionID"].(string)
-				if !ok || pageSessionID == "" {
-					h.logger.Error("Invalid registration message from client %s: missing or empty pageSessionID. Body: %+v", brokerClientID, bodyMap)
-					continue
-				}
-
-				// Publish an internal event for the SessionManager to pick up
-				registrationEvent := model.NewEvent(broker.TopicClientRegistered, map[string]string{
-					"pageSessionID":  pageSessionID,
-					"brokerClientID": brokerClientID,
-				})
-				if err := h.broker.Publish(context.Background(), registrationEvent); err != nil { // Use background context for internal event
-					h.logger.Error("Failed to publish client registration event for %s (page %s): %v", brokerClientID, pageSessionID, err)
-				} else {
-					h.logger.Info("Client %s registered with PageSessionID %s. Registration event published.", brokerClientID, pageSessionID)
-				}
-			} else {
-				h.logger.Warn("Unknown message type '%s' from client %s. Topic: '%s'", msg.Header.Type, brokerClientID, msg.Header.Topic)
-			}
+			h.logger.Warn("Unknown message type '%s' or unhandled topic '%s' from client %s.", msg.Header.Type, msg.Header.Topic, brokerClientID)
 		}
 	}
 }

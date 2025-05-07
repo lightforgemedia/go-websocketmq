@@ -4,7 +4,6 @@ package websocketmq
 import (
 	"context"
 	"net/http"
-	"time"
 
 	"github.com/lightforgemedia/go-websocketmq/assets"
 	"github.com/lightforgemedia/go-websocketmq/internal/devwatch"
@@ -18,16 +17,16 @@ import (
 
 // Re-export core types
 type (
-	Message        = model.Message
-	MessageHeader  = model.MessageHeader
-	Broker         = broker.Broker
-	Logger         = broker.Logger
-	MessageHandler = broker.MessageHandler // New: Expose the server-side handler type
+	Message          = model.Message
+	MessageHeader    = model.MessageHeader
+	Broker           = broker.Broker
+	Logger           = broker.Logger
+	MessageHandler   = broker.MessageHandler   // New: Expose the server-side handler type
 	ConnectionWriter = broker.ConnectionWriter // New: Expose connection writer interface
-	WebSocketHandler = server.Handler // Renamed from Handler for clarity
-	HandlerOptions = server.HandlerOptions
-	BrokerOptions  = broker.Options
-	WatchOptions   = devwatch.WatchOptions
+	WebSocketHandler = server.Handler          // Renamed from Handler for clarity
+	HandlerOptions   = server.HandlerOptions
+	BrokerOptions    = broker.Options
+	WatchOptions     = devwatch.WatchOptions
 )
 
 // Re-export error types
@@ -44,7 +43,6 @@ const (
 	TopicClientRegistered   = broker.TopicClientRegistered
 	TopicClientDeregistered = broker.TopicClientDeregistered
 )
-
 
 // NewEvent creates a new event message.
 func NewEvent(topic string, body any) *model.Message {
@@ -66,7 +64,6 @@ func NewResponse(req *model.Message, body any) *model.Message {
 func NewErrorMessage(req *model.Message, errorBody any) *model.Message {
 	return model.NewErrorMessage(req, errorBody)
 }
-
 
 // DefaultHandlerOptions returns default options for the WebSocket handler.
 func DefaultHandlerOptions() server.HandlerOptions { // Return concrete type

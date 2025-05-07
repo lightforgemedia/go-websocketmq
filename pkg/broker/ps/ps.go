@@ -100,7 +100,7 @@ func (b *PubSubBroker) Publish(ctx context.Context, msg *model.Message) error {
 	// We are not using its Sub/Pub for general topic dispatch to handlers in this iteration,
 	// instead, we manage subscriptions manually in b.subscriptions for more control over handler signatures.
 	// Let's use the bus for correlation ID responses.
-	if msg.Header.Type == "response" || msg.Header.Type == "error" {
+	if msg.Header.Type == model.KindResponse || msg.Header.Type == model.KindError {
 		if msg.Header.CorrelationID != "" {
 			// Marshal for the bus, as SubOnce expects raw data
 			rawData, err := json.Marshal(msg)
@@ -112,7 +112,6 @@ func (b *PubSubBroker) Publish(ctx context.Context, msg *model.Message) error {
 		}
 	}
 
-
 	return nil
 }
 
@@ -121,7 +120,7 @@ func (b *PubSubBroker) dispatchToHandlers(ctx context.Context, msg *model.Messag
 	if !ok {
 		return
 	}
-	
+
 	handlersMap, ok := subsForTopic.(*sync.Map) // map[subID]*subscription
 	if !ok {
 		b.logger.Error("internal error: subscription map for topic %s is not *sync.Map", msg.Header.Topic)
@@ -145,7 +144,7 @@ func (b *PubSubBroker) dispatchToHandlers(ctx context.Context, msg *model.Messag
 		default:
 			// continue to execute handler
 		}
-		
+
 		// Execute handler in a new goroutine to prevent blocking the publish loop.
 		go func(s *subscription, m *model.Message) {
 			b.logger.Debug("Dispatching to handler for topic %s, subID %d", m.Header.Topic, s.id)
@@ -153,7 +152,7 @@ func (b *PubSubBroker) dispatchToHandlers(ctx context.Context, msg *model.Messag
 			if err != nil {
 				b.logger.Error("Handler for topic %s (subID %d) returned error: %v", m.Header.Topic, s.id, err)
 				// Optionally, if original message was a request, send an error response
-				if m.Header.Type == "request" && m.Header.CorrelationID != "" {
+				if m.Header.Type == model.KindRequest && m.Header.CorrelationID != "" {
 					errMsg := model.NewErrorMessage(m, map[string]string{"error": fmt.Sprintf("handler error: %v", err)})
 					if errPub := b.Publish(ctx, errMsg); errPub != nil {
 						b.logger.Error("Failed to publish error message from handler error: %v", errPub)
@@ -164,7 +163,7 @@ func (b *PubSubBroker) dispatchToHandlers(ctx context.Context, msg *model.Messag
 
 			if responseMsg != nil {
 				// Ensure the response is correctly correlated if the original was a request
-				if m.Header.Type == "request" && m.Header.CorrelationID != "" {
+				if m.Header.Type == model.KindRequest && m.Header.CorrelationID != "" {
 					if responseMsg.Header.CorrelationID == "" {
 						responseMsg.Header.CorrelationID = m.Header.CorrelationID
 					}
@@ -172,15 +171,43 @@ func (b *PubSubBroker) dispatchToHandlers(ctx context.Context, msg *model.Messag
 						responseMsg.Header.Topic = m.Header.CorrelationID // Response topic is the correlation ID
 					}
 				}
-				if err := b.Publish(s.ctx, responseMsg); err != nil { // Use subscription context for publishing response
-					b.logger.Error("Failed to publish response from handler for topic %s (subID %d): %v", m.Header.Topic, s.id, err)
+
+				// If the original message came from a client, send the response directly back to that client
+				if m.Header.SourceBrokerClientID != "" &&
+					(responseMsg.Header.Type == model.KindResponse || responseMsg.Header.Type == model.KindError) {
+					// Try to send directly to the client first
+					if conn, ok := b.GetConnection(m.Header.SourceBrokerClientID); ok {
+						b.logger.Debug("Sending response directly to client %s for CorrID %s",
+							m.Header.SourceBrokerClientID, responseMsg.Header.CorrelationID)
+
+						if err := conn.WriteMessage(s.ctx, responseMsg); err != nil {
+							b.logger.Error("Failed to write response directly to client %s: %v",
+								m.Header.SourceBrokerClientID, err)
+							// Fall back to publishing if direct write fails
+							if err := b.Publish(s.ctx, responseMsg); err != nil {
+								b.logger.Error("Failed to publish response after direct write failed: %v", err)
+							}
+						}
+					} else {
+						// Client not found, publish to the bus as fallback
+						b.logger.Debug("Client %s not found for direct response, publishing to bus",
+							m.Header.SourceBrokerClientID)
+						if err := b.Publish(s.ctx, responseMsg); err != nil {
+							b.logger.Error("Failed to publish response: %v", err)
+						}
+					}
+				} else {
+					// Normal publish for server-to-server communication
+					if err := b.Publish(s.ctx, responseMsg); err != nil {
+						b.logger.Error("Failed to publish response from handler for topic %s (subID %d): %v",
+							m.Header.Topic, s.id, err)
+					}
 				}
 			}
 		}(sub, msg)
 		return true // continue iteration
 	})
 }
-
 
 // Subscribe registers a server-side handler for a topic.
 func (b *PubSubBroker) Subscribe(ctx context.Context, topic string, handler broker.MessageHandler) error {
@@ -240,7 +267,6 @@ func (b *PubSubBroker) removeSubscription(topic string, subID int64) {
 	}
 }
 
-
 // Request sends a request and waits for a response (server-to-server or server-to-handler).
 func (b *PubSubBroker) Request(ctx context.Context, req *model.Message, timeoutMs int64) (*model.Message, error) {
 	if b.isClosed() {
@@ -249,8 +275,8 @@ func (b *PubSubBroker) Request(ctx context.Context, req *model.Message, timeoutM
 	if req == nil || req.Header.CorrelationID == "" {
 		return nil, broker.ErrInvalidMessage // CorrelationID is essential
 	}
-	if req.Header.Type != "request" {
-		req.Header.Type = "request" // Ensure it's marked as a request
+	if req.Header.Type != model.KindRequest {
+		req.Header.Type = model.KindRequest // Ensure it's marked as a request
 	}
 
 	timeout := time.Duration(timeoutMs) * time.Millisecond
@@ -297,13 +323,12 @@ func (b *PubSubBroker) RequestToClient(ctx context.Context, brokerClientID strin
 	if req == nil {
 		return nil, broker.ErrInvalidMessage
 	}
-	if req.Header.Type != "request" {
-		req.Header.Type = "request" // Ensure it's a request
+	if req.Header.Type != model.KindRequest {
+		req.Header.Type = model.KindRequest // Ensure it's a request
 	}
 	if req.Header.CorrelationID == "" {
-		req.Header.CorrelationID = model.Message{}.Header.MessageID // Generate new if empty
+		req.Header.CorrelationID = model.RandomID() // Generate new if empty
 	}
-
 
 	connVal, ok := b.connections.Load(brokerClientID)
 	if !ok {
@@ -380,16 +405,19 @@ func (b *PubSubBroker) DeregisterConnection(brokerClientID string) error {
 	if loaded {
 		b.logger.Info("Connection deregistered: BrokerClientID %s", brokerClientID)
 		// Publish an internal event that this client has disconnected
-		deregisteredEvent := model.NewEvent(broker.TopicClientDeregistered, map[string]string{
-			"brokerClientID": brokerClientID,
-		})
-		// Use a background context as this is an internal notification.
-		if err := b.Publish(context.Background(), deregisteredEvent); err != nil {
-			b.logger.Error("Failed to publish client deregistration event for %s: %v", brokerClientID, err)
+		// Only if the broker is not closed
+		if !b.isClosed() {
+			deregisteredEvent := model.NewEvent(broker.TopicClientDeregistered, map[string]string{
+				"brokerClientID": brokerClientID,
+			})
+			// Use a background context as this is an internal notification.
+			if err := b.Publish(context.Background(), deregisteredEvent); err != nil {
+				b.logger.Error("Failed to publish client deregistration event for %s: %v", brokerClientID, err)
+			}
 		}
 		// Optionally close the connection if it's not already closed by the server handler
 		if conn, ok := connVal.(broker.ConnectionWriter); ok {
-			 go conn.Close() // Close in a goroutine to avoid blocking
+			go conn.Close() // Close in a goroutine to avoid blocking
 		}
 
 	} else {
@@ -411,7 +439,6 @@ func (b *PubSubBroker) GetConnection(brokerClientID string) (broker.ConnectionWr
 	return conn, ok
 }
 
-
 // Close shuts down the broker.
 func (b *PubSubBroker) Close() error {
 	b.closedMutex.Lock()
@@ -429,16 +456,18 @@ func (b *PubSubBroker) Close() error {
 		brokerClientID := key.(string)
 		conn := value.(broker.ConnectionWriter)
 		b.logger.Debug("Closing connection for client %s during broker shutdown", brokerClientID)
-		conn.Close() // This should ideally trigger DeregisterConnection flow too
+		conn.Close()                         // This should ideally trigger DeregisterConnection flow too
 		b.connections.Delete(brokerClientID) // Ensure removal
 		return true
 	})
 	b.logger.Info("All client connections instructed to close.")
-	
+
 	// Cancel all server-side subscriptions
 	b.subscriptions.Range(func(topicKey, topicValue interface{}) bool {
 		topicSubsMap, ok := topicValue.(*sync.Map)
-		if !ok { return true }
+		if !ok {
+			return true
+		}
 		topicSubsMap.Range(func(subKey, subValue interface{}) bool {
 			if sub, ok := subValue.(*subscription); ok {
 				sub.cancel() // This will trigger cleanup goroutine for each subscription
@@ -455,7 +484,7 @@ func (b *PubSubBroker) Close() error {
 
 	// Wait for a brief period for goroutines to finish
 	// This is a heuristic. A more robust way would involve wait groups for active handlers.
-	time.Sleep(100 * time.Millisecond) 
+	time.Sleep(100 * time.Millisecond)
 
 	close(b.shutdownComplete) // Signal that shutdown is complete
 	b.logger.Info("PubSubBroker closed.")

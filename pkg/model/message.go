@@ -36,6 +36,17 @@ func init() {
 	once.Do(initRandom)
 }
 
+// Kind represents the type of message (event, request, response, error)
+type Kind string
+
+// Predefined message kinds
+const (
+	KindEvent    Kind = "event"
+	KindRequest  Kind = "request"
+	KindResponse Kind = "response"
+	KindError    Kind = "error"
+)
+
 // MessageHeader contains metadata and routing information for a message.
 // Headers include identifiers, timing information, and routing details.
 type MessageHeader struct {
@@ -47,9 +58,10 @@ type MessageHeader struct {
 	// same correlation ID as the original request.
 	CorrelationID string `json:"correlationID,omitempty"`
 
-	// Type indicates the message purpose: "event", "request", or "response".
+	// Type indicates the message purpose: "event", "request", "response", or "error".
 	// Events are one-way notifications, while requests expect responses.
-	Type string `json:"type"`
+	// Use the Kind constants (KindEvent, KindRequest, etc.) for type safety.
+	Type Kind `json:"type"`
 
 	// Topic is the publish/subscribe channel for this message.
 	// For RPC-style requests initiated by the server to a specific client,
@@ -85,7 +97,7 @@ func NewEvent(topic string, body any) *Message {
 	return &Message{
 		Header: MessageHeader{
 			MessageID: randomID(),
-			Type:      "event",
+			Type:      KindEvent,
 			Topic:     topic,
 			Timestamp: time.Now().UnixMilli(),
 		},
@@ -101,7 +113,7 @@ func NewRequest(topic string, body any, timeoutMs int64) *Message {
 		Header: MessageHeader{
 			MessageID:     randomID(),
 			CorrelationID: correlationID,
-			Type:          "request",
+			Type:          KindRequest,
 			Topic:         topic, // For RPC, this is the action name
 			Timestamp:     time.Now().UnixMilli(),
 			TTL:           timeoutMs,
@@ -112,35 +124,54 @@ func NewRequest(topic string, body any, timeoutMs int64) *Message {
 
 // NewResponse creates a response message for a received request.
 // The response Topic is set to the original request's CorrelationID.
+// It also copies the SourceBrokerClientID from the request to aid direct routing.
 func NewResponse(req *Message, body any) *Message {
-	return &Message{
+	resp := &Message{
 		Header: MessageHeader{
 			MessageID:     randomID(),
 			CorrelationID: req.Header.CorrelationID,
-			Type:          "response",
+			Type:          KindResponse,
 			Topic:         req.Header.CorrelationID, // Publish to the correlation ID topic
 			Timestamp:     time.Now().UnixMilli(),
 		},
 		Body: body,
 	}
+	// Preserve the originating client so the broker can route directly if needed
+	resp.Header.SourceBrokerClientID = req.Header.SourceBrokerClientID
+	return resp
 }
 
 // NewErrorMessage creates a specialized response indicating an error.
+// It also copies the SourceBrokerClientID from the request.
 func NewErrorMessage(req *Message, errorBody any) *Message {
-	return &Message{
+	errMsg := &Message{
 		Header: MessageHeader{
 			MessageID:     randomID(),
 			CorrelationID: req.Header.CorrelationID,
-			Type:          "error", // Specific type for errors
+			Type:          KindError,
 			Topic:         req.Header.CorrelationID,
 			Timestamp:     time.Now().UnixMilli(),
 		},
 		Body: errorBody,
 	}
+	// Preserve the originating client for direct error routing if needed
+	errMsg.Header.SourceBrokerClientID = req.Header.SourceBrokerClientID
+	return errMsg
 }
 
-// randomID generates a unique identifier for messages.
-func randomID() string {
+// RandomID generates a unique identifier for messages.
+// This is exported for use by other packages that need to generate IDs.
+func RandomID() string {
+	// Ensure pseudoRand is initialized (lazy initialization)
+	if pseudoRand == nil {
+		once.Do(initRandom)
+	}
 	// Simple ID, consider UUID for production robustness if collisions are a concern.
 	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), pseudoRand.Int63())
+}
+
+// randomID is kept for backward compatibility with internal code
+// It simply calls the exported RandomID function
+func randomID() string {
+	return RandomID()
 }
