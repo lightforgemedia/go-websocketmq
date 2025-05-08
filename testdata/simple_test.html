@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Simple WebSocket Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+        }
+        .log-container {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            padding: 10px;
+            height: 200px;
+            overflow-y: auto;
+            background-color: #f9f9f9;
+            font-family: monospace;
+        }
+        .log-entry {
+            margin: 2px 0;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 2px;
+        }
+        .log-time {
+            color: #666;
+            font-size: 0.8em;
+        }
+        .status {
+            font-weight: bold;
+        }
+        .connected {
+            color: green;
+        }
+        .disconnected {
+            color: red;
+        }
+        .connecting {
+            color: orange;
+        }
+    </style>
+    <script>
+        // Log function that writes to the log container
+        function log(message, data) {
+            const logContainer = document.getElementById('log');
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            
+            const time = new Date().toLocaleTimeString();
+            let logText = `<span class="log-time">[${time}]</span> ${message}`;
+            
+            if (data !== undefined) {
+                if (typeof data === 'object') {
+                    try {
+                        logText += ` ${JSON.stringify(data)}`;
+                    } catch (e) {
+                        logText += ` [Object]`;
+                    }
+                } else {
+                    logText += ` ${data}`;
+                }
+            }
+            
+            logEntry.innerHTML = logText;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        // Update connection status
+        function updateStatus(status) {
+            const element = document.getElementById('status');
+            element.className = `status ${status}`;
+            element.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+        }
+        
+        // Connect to WebSocket
+        function connect() {
+            // Get the WebSocket URL from the page URL parameters or use default
+            const urlParams = new URLSearchParams(window.location.search);
+            const wsUrl = urlParams.get('ws') || 'ws://localhost:8081/ws';
+            
+            document.getElementById('ws-url').textContent = wsUrl;
+            log('Connecting to WebSocket:', wsUrl);
+            
+            // Test if WebSocket is supported
+            if (!window.WebSocket) {
+                log('ERROR: WebSocket is not supported by this browser');
+                updateStatus('error');
+                return;
+            }
+            
+            updateStatus('connecting');
+            
+            // Create WebSocket
+            try {
+                const socket = new WebSocket(wsUrl);
+                
+                socket.onopen = function() {
+                    log('WebSocket connection established');
+                    updateStatus('connected');
+                    
+                    // Send a simple message
+                    const message = {
+                        header: {
+                            messageID: Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+                            type: 'event',
+                            topic: '_client.register',
+                            timestamp: Date.now()
+                        },
+                        body: {
+                            pageSessionID: 'simple-test-' + Date.now()
+                        }
+                    };
+                    
+                    log('Sending registration message:', message);
+                    socket.send(JSON.stringify(message));
+                };
+                
+                socket.onmessage = function(event) {
+                    log('Message received:', event.data);
+                    try {
+                        const message = JSON.parse(event.data);
+                        if (message.header.topic === '_internal.client.registered') {
+                            log('Registration successful, client ID:', message.body.brokerClientID);
+                            document.getElementById('client-id').textContent = message.body.brokerClientID;
+                        }
+                    } catch (e) {
+                        log('Error parsing message:', e);
+                    }
+                };
+                
+                socket.onclose = function(event) {
+                    log('WebSocket connection closed:', event.code, event.reason);
+                    updateStatus('disconnected');
+                };
+                
+                socket.onerror = function(error) {
+                    log('WebSocket error:', error);
+                    updateStatus('error');
+                };
+                
+                // Store socket in window for debugging
+                window.socket = socket;
+                
+            } catch (error) {
+                log('Error creating WebSocket:', error);
+                updateStatus('error');
+            }
+        }
+        
+        // Automatically connect when page loads
+        window.onload = connect;
+    </script>
+</head>
+<body>
+    <h1>Simple WebSocket Test</h1>
+    
+    <div>
+        <h2>Connection Status</h2>
+        <p>WebSocket URL: <span id="ws-url">Not connected</span></p>
+        <p>Status: <span id="status" class="status disconnected">Disconnected</span></p>
+        <p>Client ID: <span id="client-id">None</span></p>
+        <button onclick="connect()">Reconnect</button>
+    </div>
+    
+    <div>
+        <h2>Log</h2>
+        <div id="log" class="log-container"></div>
+    </div>
+</body>
+</html>
