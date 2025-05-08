@@ -105,8 +105,6 @@ func (ts *TestServer) Close() {
 
 // TestJavaScriptClientSimple tests that a JavaScript client can connect to the server
 func TestJavaScriptClientSimple(t *testing.T) {
-	// Skip by default - run manually when needed
-	t.Skip("Skipping JavaScript client test - run manually when needed")
 	// Start the WebSocketMQ server using the existing TestServer from integration_test.go
 	server := NewTestServer(t)
 	defer server.Close()
@@ -216,8 +214,6 @@ func TestJavaScriptClientSimple(t *testing.T) {
 
 // TestJavaScriptClientRPC tests RPC communication between the server and JavaScript client
 func TestJavaScriptClientRPC(t *testing.T) {
-	// Skip by default - run manually when needed
-	t.Skip("Skipping JavaScript client RPC test - run manually when needed")
 
 	// Start the WebSocketMQ server
 	server := NewTestServer(t)
