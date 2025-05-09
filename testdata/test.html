@@ -55,10 +55,10 @@
             const logContainer = document.getElementById('log');
             const logEntry = document.createElement('div');
             logEntry.className = 'log-entry';
-            
+
             const time = new Date().toLocaleTimeString();
             let logText = `<span class="log-time">[${time}]</span> ${message}`;
-            
+
             if (data !== undefined) {
                 if (typeof data === 'object') {
                     logText += ` ${JSON.stringify(data)}`;
@@ -66,108 +66,144 @@
                     logText += ` ${data}`;
                 }
             }
-            
+
             logEntry.innerHTML = logText;
             logContainer.appendChild(logEntry);
             logContainer.scrollTop = logContainer.scrollHeight;
         }
-        
+
         // Update test status
         function updateTestStatus(testId, status, message) {
             const element = document.getElementById(testId);
             element.className = `status ${status}`;
             element.textContent = message || status.charAt(0).toUpperCase() + status.slice(1);
         }
-        
+
         // Automatically connect and run tests when page loads
         window.onload = function() {
             log('Page loaded, initializing WebSocketMQ client');
-            
+
             // Get the WebSocket URL from the page URL parameters or use default
             const urlParams = new URLSearchParams(window.location.search);
             const wsUrl = urlParams.get('ws') || 'ws://localhost:8080/ws';
-            
+
             document.getElementById('ws-url').textContent = wsUrl;
-            
-            // Create the WebSocketMQ client
-            const client = new WebSocketMQClient(wsUrl, { debug: true });
-            
-            // Log all messages for debugging
-            client.onMessage = function(message) {
-                log('Message received', message);
-            };
-            
-            // Handle connection
-            client.onConnect = function() {
-                log('Connected to WebSocketMQ server with client ID:', client.brokerClientID);
-                document.getElementById('status').className = 'status passed';
-                document.getElementById('status').textContent = 'Connected';
-                document.getElementById('client-id').textContent = client.brokerClientID;
-                
-                // Start running tests
-                runTests(client);
-            };
-            
-            // Handle connection errors
-            client.onError = function(error) {
-                log('Connection error:', error);
+            log('Using WebSocket URL:', wsUrl);
+
+            // Test if WebSocket is supported
+            if (!window.WebSocket) {
+                log('ERROR: WebSocket is not supported by this browser');
                 document.getElementById('status').className = 'status failed';
-                document.getElementById('status').textContent = 'Error: ' + error;
-            };
-            
-            // Handle disconnection
-            client.onDisconnect = function() {
-                log('Disconnected from WebSocketMQ server');
-                document.getElementById('status').className = 'status pending';
-                document.getElementById('status').textContent = 'Disconnected';
-            };
-            
-            // Register handlers for server-initiated RPCs
-            client.registerHandler('server.echo', function(message) {
-                log('Received server.echo request', message);
-                updateTestStatus('test3', 'passed');
-                // Return a response
-                return {
-                    result: 'echo-' + (message.body.param || 'default')
+                document.getElementById('status').textContent = 'Error: WebSocket not supported';
+                return;
+            }
+
+            // Try to create a WebSocket directly to test connectivity
+            try {
+                log('Testing direct WebSocket connection...');
+                const testSocket = new WebSocket(wsUrl);
+
+                testSocket.onopen = () => {
+                    log('Direct WebSocket connection successful');
+                    testSocket.close();
+
+                    // Now create the WebSocketMQ client
+                    createClient(wsUrl);
                 };
-            });
-            
-            // Register handler for broadcast events
-            client.registerHandler('event.broadcast', function(message) {
-                log('Received broadcast event', message);
-                updateTestStatus('test4', 'passed');
-                // No response needed for events
-                return null;
-            });
-            
-            // Register handler for error test
-            client.registerHandler('server.error', function(message) {
-                log('Received server.error request', message);
-                // Throw an error to test error handling
-                throw new Error('Intentional error for testing');
-            });
-            
-            // Register handler for timeout test
-            client.registerHandler('server.timeout', function(message) {
-                log('Received server.timeout request', message);
-                updateTestStatus('test6', 'passed');
-                // Don't return anything to simulate a timeout
-                return null;
-            });
+
+                testSocket.onerror = (error) => {
+                    log('Direct WebSocket connection failed:', error);
+                    document.getElementById('status').className = 'status failed';
+                    document.getElementById('status').textContent = 'Error: WebSocket connection failed';
+                };
+            } catch (error) {
+                log('Error creating direct WebSocket:', error);
+                document.getElementById('status').className = 'status failed';
+                document.getElementById('status').textContent = 'Error: ' + error.message;
+            }
+
+            function createClient(url) {
+                // Create the WebSocketMQ client
+                log('Creating WebSocketMQ client with URL:', url);
+                const client = new WebSocketMQClient(url, { debug: true });
+
+                // Log all messages for debugging
+                client.onMessage = function(message) {
+                    log('Message received', message);
+                };
+
+                // Handle connection
+                client.onConnect = function() {
+                    log('Connected to WebSocketMQ server with client ID:', client.brokerClientID);
+                    document.getElementById('status').className = 'status passed';
+                    document.getElementById('status').textContent = 'Connected';
+                    document.getElementById('client-id').textContent = client.brokerClientID;
+
+                    // Start running tests
+                    runTests(client);
+                };
+
+                // Handle connection errors
+                client.onError = function(error) {
+                    log('Connection error:', error);
+                    document.getElementById('status').className = 'status failed';
+                    document.getElementById('status').textContent = 'Error: ' + error;
+                };
+
+                // Handle disconnection
+                client.onDisconnect = function() {
+                    log('Disconnected from WebSocketMQ server');
+                    document.getElementById('status').className = 'status pending';
+                    document.getElementById('status').textContent = 'Disconnected';
+                };
+
+                // Register handlers for server-initiated RPCs
+                client.registerHandler('server.echo', function(message) {
+                    log('Received server.echo request', message);
+                    updateTestStatus('test3', 'passed');
+                    // Return a response
+                    return {
+                        result: 'echo-' + (message.body.param || 'default')
+                    };
+                });
+
+                // Register handler for broadcast events
+                client.registerHandler('event.broadcast', function(message) {
+                    log('Received broadcast event', message);
+                    updateTestStatus('test4', 'passed');
+                    // No response needed for events
+                    return null;
+                });
+
+                // Register handler for error test
+                client.registerHandler('server.error', function(message) {
+                    log('Received server.error request', message);
+                    // Throw an error to test error handling
+                    throw new Error('Intentional error for testing');
+                });
+
+                // Register handler for timeout test
+                client.registerHandler('server.timeout', function(message) {
+                    log('Received server.timeout request', message);
+                    updateTestStatus('test6', 'passed');
+                    // Don't return anything to simulate a timeout
+                    return null;
+                });
+            }
         };
-        
+
         // Run all tests
         function runTests(client) {
             log('Starting tests');
-            
+
             // Test 1: Basic connectivity - already passed if we're here
             updateTestStatus('test1', 'passed');
-            
+
             // Test 2: Client-to-server RPC
             setTimeout(() => {
                 log('Running Test 2: Client-to-server RPC');
                 updateTestStatus('test2', 'pending', 'Running...');
-                
+
                 client.sendRPC('client.echo', { param: 'test-param' }, 5000)
                     .then(response => {
                         log('Test 2 response:', response);
@@ -178,12 +214,12 @@
                         updateTestStatus('test2', 'failed', 'Failed: ' + err);
                     });
             }, 500);
-            
+
             // Test 5: Error handling
             setTimeout(() => {
                 log('Running Test 5: Error handling');
                 updateTestStatus('test5', 'pending', 'Running...');
-                
+
                 client.sendRPC('client.error', { param: 'test-param' }, 5000)
                     .then(response => {
                         log('Test 5 unexpected success:', response);
@@ -194,7 +230,7 @@
                         updateTestStatus('test5', 'passed', 'Passed: Received expected error');
                     });
             }, 1000);
-            
+
             // Test 7: Client reconnection is tested by the server closing the connection
             // The client should automatically reconnect
         }
@@ -202,14 +238,14 @@
 </head>
 <body>
     <h1>WebSocketMQ JavaScript Client Test</h1>
-    
+
     <div class="test-container">
         <h2>Connection Status</h2>
         <p>WebSocket URL: <span id="ws-url">ws://localhost:8080/ws</span></p>
         <p>Status: <span id="status" class="status pending">Connecting...</span></p>
         <p>Client ID: <span id="client-id">None</span></p>
     </div>
-    
+
     <div class="test-container">
         <h2>Test Results</h2>
         <p>Test 1 (Basic Connectivity): <span id="test1" class="status pending">Pending</span></p>
@@ -220,7 +256,7 @@
         <p>Test 6 (Timeout Handling): <span id="test6" class="status pending">Pending</span></p>
         <p>Test 7 (Reconnection): <span id="test7" class="status pending">Pending</span></p>
     </div>
-    
+
     <div class="test-container">
         <h2>Log</h2>
         <div id="log" class="log-container"></div>
