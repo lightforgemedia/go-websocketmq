@@ -20,6 +20,7 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/lightforgemedia/go-websocketmq/pkg/broker"
+	"github.com/lightforgemedia/go-websocketmq/pkg/model"
 	"github.com/lightforgemedia/go-websocketmq/pkg/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

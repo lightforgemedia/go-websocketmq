@@ -1,4 +1,4 @@
-// pkg/broker/ps/js_client_test_new.go
+// pkg/broker/ps/js_client_test.go
 //go:build js_client
 // +build js_client
 
@@ -8,29 +8,17 @@
 package ps_test
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/go-rod/rod"
-	"github.com/go-rod/rod/lib/launcher"
 	"github.com/lightforgemedia/go-websocketmq/pkg/broker"
-	"github.com/lightforgemedia/go-websocketmq/pkg/broker/ps"
-	"github.com/lightforgemedia/go-websocketmq/pkg/broker/ps/testutil"
-	"github.com/lightforgemedia/go-websocketmq/pkg/model"
-	"github.com/lightforgemedia/go-websocketmq/pkg/server"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -93,7 +81,7 @@ func logBrowserConsole(t *testing.T, page *rod.Page) {
 
 	if entries.Value.Str() == "null" || entries.Value.Str() == "" {
 		t.Log("(No console logs captured via console.history or array is empty)")
-		
+
 		// Try to get console logs via JavaScript evaluation
 		consoleLogsJS, err := page.Eval(`() => {
 			if (window.console && window.console.logs) {

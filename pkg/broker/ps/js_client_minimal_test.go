@@ -19,6 +19,7 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/lightforgemedia/go-websocketmq/pkg/broker"
+	"github.com/lightforgemedia/go-websocketmq/pkg/model"
 	"github.com/lightforgemedia/go-websocketmq/pkg/server"
 	"github.com/stretchr/testify/require"
 )
@@ -35,25 +36,25 @@ func TestJSClient_MinimalConnectivity(t *testing.T) {
 
 	// Create a channel to receive client registration events
 	clientRegistered := make(chan string, 1)
-	
+
 	// Subscribe to client registration events
-	err := server.Broker.Subscribe(context.Background(), broker.TopicClientRegistered, 
+	err := server.Broker.Subscribe(context.Background(), broker.TopicClientRegistered,
 		func(ctx context.Context, msg *model.Message, _ string) (*model.Message, error) {
 			t.Logf("Received client registration event: %+v", msg.Body)
-			
+
 			// Extract the broker client ID from the message
 			bodyMap, ok := msg.Body.(map[string]interface{})
 			if !ok {
 				t.Logf("Unexpected body type: %T", msg.Body)
 				return nil, nil
 			}
-			
+
 			clientID, ok := bodyMap["brokerClientID"].(string)
 			if !ok {
 				t.Logf("Missing brokerClientID in event")
 				return nil, nil
 			}
-			
+
 			// Send the client ID to the channel
 			clientRegistered <- clientID
 			return nil, nil
@@ -75,7 +76,7 @@ func TestJSClient_MinimalConnectivity(t *testing.T) {
 
 	// Create the WebSocket URL for the client
 	wsURL := strings.Replace(server.Server.URL, "http://", "ws://", 1) + "/ws"
-	
+
 	// Create the page URL with the WebSocket URL as a query parameter
 	pageURL := fmt.Sprintf("%s/simple_test.html?ws=%s", fileServer.URL, wsURL)
 	t.Logf("Loading page: %s", pageURL)
