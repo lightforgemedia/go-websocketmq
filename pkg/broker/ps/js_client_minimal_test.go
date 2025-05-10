@@ -70,12 +70,12 @@ func TestJSClient_MinimalConnectivity(t *testing.T) {
 							try {
 								console.log('WebSocketMQ script loaded:', typeof WebSocketMQ);
 
-								if (typeof WebSocketMQ === 'function') {
-									console.log('WebSocketMQ is a constructor function');
+								if (typeof WebSocketMQ === 'object' && typeof WebSocketMQ.Client === 'function') {
+									console.log('WebSocketMQ.Client is a constructor function');
 									statusEl.textContent = 'WebSocketMQ Loaded';
 									statusEl.className = 'success';
 								} else {
-									console.error('WebSocketMQ is not a constructor function:', WebSocketMQ);
+									console.error('WebSocketMQ.Client is not a constructor function:', WebSocketMQ);
 									statusEl.textContent = 'WebSocketMQ Not Found';
 									statusEl.className = 'error';
 								}
