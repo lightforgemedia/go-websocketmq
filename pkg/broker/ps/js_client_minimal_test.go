@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"testing"
 
 	"github.com/go-rod/rod"
@@ -18,11 +20,41 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// getPortFromURL extracts the port number from a URL
+func getPortFromURL(urlStr string) int {
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		return 0
+	}
+
+	// If the port is explicitly specified in the URL
+	if u.Port() != "" {
+		port, err := strconv.Atoi(u.Port())
+		if err != nil {
+			return 0
+		}
+		return port
+	}
+
+	// Default ports based on scheme
+	switch u.Scheme {
+	case "http":
+		return 80
+	case "https":
+		return 443
+	default:
+		return 0
+	}
+}
+
 // TestJSClient_MinimalConnectivity is the simplest possible test to verify
 // that we can load a page and display "Hello, World!".
 func TestJSClient_MinimalConnectivity(t *testing.T) {
 	// Create a file server to serve the test HTML file
-	fileServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var fileServer *httptest.Server
+
+	// Create a server handler function
+	serverHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Logf("File server request: %s", r.URL.Path)
 
 		// Serve a simple HTML page with "Hello, World!"
@@ -45,7 +77,23 @@ func TestJSClient_MinimalConnectivity(t *testing.T) {
 
 		// For other requests, try to serve from the file system
 		serveTestFiles(t, w, r)
-	}))
+	})
+
+	// Create a server and ensure it's not using port 8080
+	for {
+		fileServer = httptest.NewServer(serverHandler)
+
+		// Check if the server is using port 8080
+		port := getPortFromURL(fileServer.URL)
+		if port != 8080 && port != 80 && port != 84 {
+			break
+		}
+
+		// If it's using port 8080, close it and try again
+		t.Logf("Server assigned port %d, which is not allowed. Restarting server...", port)
+		fileServer.Close()
+	}
+
 	defer fileServer.Close()
 	t.Logf("File server running at: %s", fileServer.URL)
 
