@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,12 +12,19 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lightforgemedia/go-websocketmq"
-	"github.com/lightforgemedia/go-websocketmq/cmd/rpcserver/api"
-	"github.com/lightforgemedia/go-websocketmq/cmd/rpcserver/session"
+	// Use specific subpackages from the library for concrete types/interfaces
+	"github.com/lightforgemedia/go-websocketmq/pkg/broker"
+	"github.com/lightforgemedia/go-websocketmq/pkg/broker/ps" // Concrete PubSubBroker implementation
+	"github.com/lightforgemedia/go-websocketmq/pkg/model"
+	"github.com/lightforgemedia/go-websocketmq/pkg/server" // For server.Handler and server.DefaultHandlerOptions
+
+	// Local application packages
+	"github.com/lightforgemedia/go-websocketmq/pkg/api"
+	"github.com/lightforgemedia/go-websocketmq/pkg/assets" // For ScriptHandler
+	"github.com/lightforgemedia/go-websocketmq/pkg/session"
 )
 
-// Simple logger implementation for the example
+// AppLogger provides a simple logger satisfying broker.Logger interface.
 type AppLogger struct{}
 
 func (l *AppLogger) Debug(msg string, args ...any) { log.Printf("DEBUG: "+msg, args...) }
@@ -29,30 +37,31 @@ func main() {
 	logger.Info("Starting RPC WebSocketMQ Server...")
 
 	// 1. Initialize Broker
-	brokerOpts := websocketmq.DefaultBrokerOptions()
-	broker := websocketmq.NewPubSubBroker(logger, brokerOpts)
-	// Cast to access specific ps.PubSubBroker methods if needed for shutdown, e.g. WaitForShutdown
-	// psBroker, _ := broker.(*ps.PubSubBroker) // Assuming ps is the concrete type
+	brokerOpts := broker.DefaultOptions()        // Uses pkg/broker/broker.go
+	brokerInstance := ps.New(logger, brokerOpts) // Uses pkg/broker/ps/ps.go
+	logger.Info("PubSubBroker initialized.")
 
 	// 2. Initialize Session Manager
-	// The session manager needs the broker to listen to registration/deregistration events.
-	sessionManager := session.NewManager(logger, broker)
+	sessionManager := session.NewManager(logger, brokerInstance)
 	logger.Info("Session Manager initialized.")
 
 	// 3. Initialize WebSocket Handler
-	wsHandlerOpts := websocketmq.DefaultHandlerOptions()
-	wsHandlerOpts.ClientRegisterTopic = "_client.register" // Ensure this matches JS client
-	wsHandler := websocketmq.NewWebSocketHandler(broker, logger, wsHandlerOpts)
+	wsHandlerOpts := server.DefaultHandlerOptions() // Uses pkg/server/handler.go
+	// Ensure topics match JS client and session manager expectations
+	wsHandlerOpts.ClientRegisterTopic = "_client.register"
+	wsHandlerOpts.ClientRegisteredAckTopic = broker.TopicClientRegistered // Server sends ACK on this
+
+	wsHandler := server.NewHandler(brokerInstance, logger, wsHandlerOpts)
 	logger.Info("WebSocket Handler initialized.")
 
 	// 4. Initialize API Handler
-	apiHandler := api.NewHandler(logger, broker, sessionManager)
+	apiHandler := api.NewHandler(logger, brokerInstance, sessionManager)
 	logger.Info("API Handler initialized.")
 
 	// 5. Setup HTTP routes
 	mux := http.NewServeMux()
-	mux.Handle("/ws", wsHandler) // WebSocket connections
-	mux.Handle("/wsmq/", http.StripPrefix("/wsmq/", websocketmq.ScriptHandler())) // Serve JS client
+	mux.Handle("/ws", wsHandler)                                             // WebSocket connections
+	mux.Handle("/wsmq/", http.StripPrefix("/wsmq/", assets.ScriptHandler())) // Serve JS client from embedded assets
 
 	// API routes for browser actions
 	mux.HandleFunc("/api/click", apiHandler.HandleAction("browser.click"))
@@ -60,20 +69,31 @@ func main() {
 	mux.HandleFunc("/api/navigate", apiHandler.HandleAction("browser.navigate"))
 	mux.HandleFunc("/api/getText", apiHandler.HandleAction("browser.getText"))
 	mux.HandleFunc("/api/screenshot", apiHandler.HandleAction("browser.screenshot"))
-	// Add more actions as needed...
+	mux.HandleFunc("/api/getPageSource", apiHandler.HandleAction("browser.getPageSource"))
+	logger.Info("API and static asset routes configured.")
 
-	// Serve static files for the example UI
+	// Serve static files for the example UI (index.html, style.css, browser_automation_mock.js)
 	mux.Handle("/", http.FileServer(http.Dir("./cmd/rpcserver/static")))
-	logger.Info("HTTP routes configured.")
+	logger.Info("Static file server for UI configured for ./cmd/rpcserver/static")
 
-	// Example server-side subscription (not directly related to RPC, but shows broker usage)
-	broker.Subscribe(context.Background(), "server.ping", func(ctx context.Context, msg *websocketmq.Message, sourceBrokerID string) (*websocketmq.Message, error) {
-		logger.Info("Received server.ping from source %s: %+v", sourceBrokerID, msg.Body)
-		return websocketmq.NewResponse(msg, map[string]string{"reply": "pong from server handler"}), nil
+	// Example server-side subscription for client-initiated RPC
+	err := brokerInstance.Subscribe(context.Background(), "server.ping", func(ctx context.Context, msg *model.Message, sourceBrokerID string) (*model.Message, error) {
+		logger.Info("Handler for 'server.ping': Received from BrokerClientID %s, Body: %+v", sourceBrokerID, msg.Body)
+		// Echo back the client's payload along with a server message
+		responseBody := map[string]interface{}{
+			"reply":       "pong from server handler",
+			"client_data": msg.Body,
+		}
+		return model.NewResponse(msg, responseBody), nil
 	})
+	if err != nil {
+		logger.Error("Failed to subscribe to 'server.ping': %v", err)
+	} else {
+		logger.Info("Subscribed to 'server.ping' topic for client RPCs.")
+	}
 
 	// 6. Start HTTP server
-	server := &http.Server{
+	httpServer := &http.Server{
 		Addr:    ":9000",
 		Handler: mux,
 	}
@@ -81,8 +101,9 @@ func main() {
 	go func() {
 		logger.Info("RPC Server listening on http://localhost:9000")
 		fmt.Println("--- Open http://localhost:9000 in your browser to see the example ---")
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("HTTP server ListenAndServe error: %v", err)
+			// Consider a more graceful shutdown of other components if ListenAndServe fails critically
 			os.Exit(1)
 		}
 	}()
@@ -90,23 +111,31 @@ func main() {
 	// 7. Graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	logger.Info("Shutting down server...")
+	sig := <-quit
+	logger.Info("Received signal: %s. Shutting down server...", sig)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	// Context for shutdown operations
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second) // Increased timeout
+	defer shutdownCancel()
 
-	if err := server.Shutdown(ctx); err != nil {
+	// Shutdown HTTP server
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		logger.Error("HTTP server shutdown error: %v", err)
+	} else {
+		logger.Info("HTTP server gracefully stopped.")
 	}
 
-	// Close the broker (which should also handle closing connections and subscriptions)
-	if err := broker.Close(); err != nil {
+	// Close the broker
+	logger.Info("Closing broker...")
+	if err := brokerInstance.Close(); err != nil {
 		logger.Error("Broker close error: %v", err)
+	} else {
+		logger.Info("Broker close initiated.")
 	}
-	// if psBroker != nil {
-	// 	psBroker.WaitForShutdown() // If you have such a method
-	// }
+
+	// Wait for broker to fully shutdown if it supports it (PubSubBroker does)
+	brokerInstance.WaitForShutdown()
+	logger.Info("Broker fully shutdown.")
 
 	logger.Info("Server gracefully stopped.")
 }

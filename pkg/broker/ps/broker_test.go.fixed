@@ -222,7 +222,6 @@ func TestPubSubBroker_Subscribe_Lifecycle(t *testing.T) {
 
 // TestPubSubBroker_Request_ServerToHandler tests server-to-handler RPC.
 func TestPubSubBroker_Request_ServerToHandler(t *testing.T) {
-	t.Skip("Skipping this test for now as it's failing but the functionality is working correctly")
 	logger := testutil.NewTestLogger(t)
 	b := ps.New(logger, broker.DefaultOptions())
 	defer b.Close()
@@ -312,52 +311,51 @@ func TestPubSubBroker_Request_ServerToHandler(t *testing.T) {
 		}
 	}
 
-	t.Run("handler returns error", func(t *testing.T) {
-		errorTopic := "rpc.server.handler.error"
-		errMsgText := "handler intentional error"
-		err := b.Subscribe(context.Background(), errorTopic, func(ctx context.Context, msg *model.Message, _ string) (*model.Message, error) {
-			return nil, errors.New(errMsgText)
-		})
-		require.NoError(t, err)
-
-		reqMsgErr := model.NewRequest(errorTopic, "data", 1000)
-		respMsgErr, err := b.Request(context.Background(), reqMsgErr, 1000)
-		require.NoError(t, err) // Request itself doesn't fail, it gets an error response
-		require.NotNil(t, respMsgErr)
-		assert.Equal(t, model.KindError, respMsgErr.Header.Type)
-		assert.Equal(t, reqMsgErr.Header.CorrelationID, respMsgErr.Header.CorrelationID)
-		errBody, ok := respMsgErr.Body.(map[string]interface{})
-		require.True(t, ok)
-		assert.Contains(t, errBody["error"], errMsgText)
+t.Run("handler returns error", func(t *testing.T) {
+	errorTopic := "rpc.server.handler.error"
+	errMsgText := "handler intentional error"
+	err := b.Subscribe(context.Background(), errorTopic, func(ctx context.Context, msg *model.Message, _ string) (*model.Message, error) {
+		return nil, errors.New(errMsgText)
 	})
+	require.NoError(t, err)
 
-	t.Run("request timeout", func(t *testing.T) {
-		timeoutTopic := "rpc.server.handler.timeout"
-		err := b.Subscribe(context.Background(), timeoutTopic, func(ctx context.Context, msg *model.Message, _ string) (*model.Message, error) {
-			time.Sleep(200 * time.Millisecond) // Sleep longer than timeout
-			return model.NewResponse(msg, "late response"), nil
-		})
-		require.NoError(t, err)
+	reqMsgErr := model.NewRequest(errorTopic, "data", 1000)
+	respMsgErr, err := b.Request(context.Background(), reqMsgErr, 1000)
+	require.NoError(t, err) // Request itself doesn't fail, it gets an error response
+	require.NotNil(t, respMsgErr)
+	assert.Equal(t, model.KindError, respMsgErr.Header.Type)
+	assert.Equal(t, reqMsgErr.Header.CorrelationID, respMsgErr.Header.CorrelationID)
+	errBody, ok := respMsgErr.Body.(map[string]interface{})
+	require.True(t, ok)
+	assert.Contains(t, errBody["error"], errMsgText)
+})
 
-		reqMsgTimeout := model.NewRequest(timeoutTopic, "data", 100) // 100ms timeout
-		_, err = b.Request(context.Background(), reqMsgTimeout, 100)
-		require.Error(t, err)
-		assert.Equal(t, broker.ErrRequestTimeout, err, "Expected ErrRequestTimeout")
+t.Run("request timeout", func(t *testing.T) {
+	timeoutTopic := "rpc.server.handler.timeout"
+	err := b.Subscribe(context.Background(), timeoutTopic, func(ctx context.Context, msg *model.Message, _ string) (*model.Message, error) {
+		time.Sleep(200 * time.Millisecond) // Sleep longer than timeout
+		return model.NewResponse(msg, "late response"), nil
 	})
+	require.NoError(t, err)
 
-	t.Run("no handler for topic", func(t *testing.T) {
-		noHandlerTopic := "rpc.server.handler.none"
-		reqMsgNoHandler := model.NewRequest(noHandlerTopic, "data", 100)
-		_, err := b.Request(context.Background(), reqMsgNoHandler, 100)
-		require.Error(t, err)
-		// This will timeout because no handler means no response will be published to the correlation ID
-		assert.Equal(t, broker.ErrRequestTimeout, err, "Expected ErrRequestTimeout")
-	})
+	reqMsgTimeout := model.NewRequest(timeoutTopic, "data", 100) // 100ms timeout
+	_, err = b.Request(context.Background(), reqMsgTimeout, 100)
+	require.Error(t, err)
+	assert.Equal(t, broker.ErrRequestTimeout, err, "Expected ErrRequestTimeout")
+})
+
+t.Run("no handler for topic", func(t *testing.T) {
+	noHandlerTopic := "rpc.server.handler.none"
+	reqMsgNoHandler := model.NewRequest(noHandlerTopic, "data", 100)
+	_, err := b.Request(context.Background(), reqMsgNoHandler, 100)
+	require.Error(t, err)
+	// This will timeout because no handler means no response will be published to the correlation ID
+	assert.Equal(t, broker.ErrRequestTimeout, err, "Expected ErrRequestTimeout")
+})
 }
 
 // TestPubSubBroker_RequestToClient tests server-to-WebSocket client RPC.
 func TestPubSubBroker_RequestToClient(t *testing.T) {
-	t.Skip("Skipping this test for now as it's failing but the functionality is working correctly")
 	logger := testutil.NewTestLogger(t)
 	b := ps.New(logger, broker.DefaultOptions())
 	defer b.Close()

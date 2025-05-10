@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/lightforgemedia/go-websocketmq/pkg/model" // Use model from within the library
+	"github.com/lightforgemedia/go-websocketmq/pkg/model"
 )
 
 // Predefined error types
@@ -16,7 +16,6 @@ var (
 	ErrConnectionWrite     = errors.New("connection write error")
 	ErrBrokerClosed        = errors.New("broker is closed")
 	ErrInvalidMessage      = errors.New("invalid message")
-	ErrHandlerNotFound     = errors.New("handler not found for topic") // Added as per test plan
 )
 
 // Constants for internal broker events
@@ -32,7 +31,6 @@ const (
 
 
 // Logger defines the interface for logging messages.
-// This should be compatible with the Logger in the root of go-websocketmq.
 type Logger interface {
 	Debug(msg string, args ...any)
 	Info(msg string, args ...any)
@@ -55,21 +53,20 @@ type ConnectionWriter interface {
 
 // Broker defines the interface for message routing.
 type Broker interface {
-	// Publish sends a message. If the message is a response/error, it's routed via
-	// its CorrelationID. It's also dispatched to any server-side handlers subscribed
-	// to its Topic.
-	// For client-originated messages, SourceBrokerClientID in msg.Header should be set.
+	// Publish sends a message to all subscribers of the message's topic.
 	Publish(ctx context.Context, msg *model.Message) error
 
 	// Subscribe registers a handler for a specific topic.
 	// The sourceBrokerClientID in the MessageHandler will be empty for messages not originating from a client connection.
 	Subscribe(ctx context.Context, topic string, handler MessageHandler) error
 	
-	// Unsubscribe is not part of this iteration's interface for simplicity,
-	// relying on context cancellation of subscriptions for cleanup.
-	// Unsubscribe(ctx context.Context, topic string, handlerID interface{}) error
+	// Unsubscribe removes a handler for a specific topic.
+	// This is more complex to implement correctly with anonymous handlers.
+	// For simplicity, we might rely on context cancellation for cleanup or require named subscriptions.
+	// Unsubscribe(ctx context.Context, topic string, handler MessageHandler) error // TODO: Consider how to implement this effectively
 
-	// Request sends a request on a topic to a server-side handler and waits for a response.
+	// Request sends a request on a topic and waits for a response.
+	// This is typically for server-to-server or server-to-generic-handler communication.
 	Request(ctx context.Context, req *model.Message, timeoutMs int64) (*model.Message, error)
 
 	// RequestToClient sends a request message directly to a specific client identified by brokerClientID
@@ -88,7 +85,6 @@ type Broker interface {
 }
 
 // Options configures the behavior of the message broker.
-// This should be compatible with Options in the root of go-websocketmq.
 type Options struct {
 	QueueLength int
 	// DefaultRequestTimeout is used if a request's TTL is not set or is zero.
@@ -96,10 +92,9 @@ type Options struct {
 }
 
 // DefaultOptions returns default broker options.
-// This should be compatible with DefaultOptions in the root of go-websocketmq.
 func DefaultOptions() Options {
 	return Options{
-		QueueLength:           256, // Queue length for internal cskr/pubsub bus
+		QueueLength:           256,
 		DefaultRequestTimeout: 10 * time.Second,
 	}
 }
