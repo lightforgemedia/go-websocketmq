@@ -115,7 +115,17 @@ func TestJSClient_MinimalConnectivity(t *testing.T) {
 							const pageSessionId = 'page-' + Math.random().toString(36).substring(2, 15);
 
 							try {
+								console.log('WebSocketMQ script loaded:', typeof WebSocketMQ);
+
+								// Log the WebSocketMQ constructor
+								if (typeof WebSocketMQ !== 'function') {
+									console.error('WebSocketMQ is not a constructor function:', WebSocketMQ);
+									statusEl.textContent = 'WebSocketMQ not found';
+									return;
+								}
+
 								// Initialize WebSocketMQ client
+								console.log('Creating WebSocketMQ client with URL:', '%s');
 								const client = new WebSocketMQ({
 									url: '%s',
 									pageSessionId: pageSessionId,
@@ -127,6 +137,7 @@ func TestJSClient_MinimalConnectivity(t *testing.T) {
 
 								// Store client in window for debugging
 								window.wsmqClient = client;
+								console.log('WebSocketMQ client created:', client);
 
 								// Set up event handlers
 								client.on('open', () => {
@@ -155,7 +166,9 @@ func TestJSClient_MinimalConnectivity(t *testing.T) {
 								console.log('WebSocketMQ client initialized with page session ID:', pageSessionId);
 							} catch (e) {
 								console.error('Error initializing WebSocketMQ client:', e);
-								statusEl.textContent = 'Initialization Error';
+								console.error('Error details:', e.message);
+								console.error('Error stack:', e.stack);
+								statusEl.textContent = 'Initialization Error: ' + e.message;
 							}
 						});
 					</script>
