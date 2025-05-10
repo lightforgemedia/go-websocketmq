@@ -70,7 +70,7 @@ func TestJSClient_MinimalConnectivity(t *testing.T) {
 			wsURL := strings.Replace(testServer.Server.URL, "http://", "ws://", 1) + "/ws"
 
 			w.Header().Set("Content-Type", "text/html")
-			w.Write([]byte(fmt.Sprintf(`
+			htmlTemplate := `
 				<!DOCTYPE html>
 				<html>
 				<head>
@@ -125,9 +125,9 @@ func TestJSClient_MinimalConnectivity(t *testing.T) {
 								}
 
 								// Initialize WebSocketMQ client
-								console.log('Creating WebSocketMQ client with URL:', '%s');
+								console.log('Creating WebSocketMQ client with URL:', wsURL);
 								const client = new WebSocketMQ({
-									url: '%s',
+									url: wsURL,
 									pageSessionId: pageSessionId,
 									debug: true,
 									reconnect: true,
@@ -183,7 +183,11 @@ func TestJSClient_MinimalConnectivity(t *testing.T) {
 					</div>
 				</body>
 				</html>
-			`, wsURL)))
+			`
+
+			// Replace the wsURL placeholder with the actual WebSocket URL
+			htmlContent := strings.Replace(htmlTemplate, "wsURL", wsURL, -1)
+			w.Write([]byte(htmlContent))
 			return
 		}
 
