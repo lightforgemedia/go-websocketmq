@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"github.com/lightforgemedia/go-websocketmq/pkg/client"
@@ -59,13 +57,16 @@ func main() {
 
 	// Request server time (no request payload)
 	logger.Info("Client: Requesting server time...")
+	fmt.Println("Client: Requesting server time...")
 	reqCtxTime, cancelTime := context.WithTimeout(ctx, 3*time.Second)
 	timeResp, err := client.GenericRequest[app_shared_types.GetTimeResponse](cli, reqCtxTime, app_shared_types.TopicGetTime)
 	cancelTime()
 	if err != nil {
 		logger.Error("Client: GetTime request failed", "error", err)
+		fmt.Printf("Client: GetTime request failed: %v\n", err)
 	} else {
 		logger.Info("Client: Server time received", "time", timeResp.CurrentTime)
+		fmt.Printf("Client: Server time received: %s\n", timeResp.CurrentTime)
 	}
 
 	// Request user details (with request payload)
@@ -165,10 +166,12 @@ func main() {
 		logger.Warn("Client: Slow server request test FAILED (no client timeout error received).")
 	}
 
-	logger.Info("Client running. Press Ctrl+C to exit.", "clientID", cli.ID())
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	<-sigChan
+	logger.Info("Client running. Will exit after 10 seconds.", "clientID", cli.ID())
+	fmt.Println("Client running. Will exit after 10 seconds. Client ID:", cli.ID())
+
+	// Wait for a while to allow the client to receive server announcements
+	time.Sleep(10 * time.Second)
+	fmt.Println("Client shutting down after 10 seconds...")
 
 	logger.Info("Client shutting down...", "clientID", cli.ID())
 	if cli != nil {

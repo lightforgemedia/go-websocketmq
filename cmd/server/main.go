@@ -56,7 +56,7 @@ func main() {
 	// 2. Define handlers
 	err = ergoBroker.OnRequest(app_shared_types.TopicGetTime,
 		func(client broker.ClientHandle, req app_shared_types.GetTimeRequest) (app_shared_types.GetTimeResponse, error) {
-			logger.Info("Server: Client requested time", "clientID", client.ID(), "clientAddr", client.RemoteAddr())
+			logger.Info("Server: Client requested time", "clientID", client.ID())
 			return app_shared_types.GetTimeResponse{CurrentTime: time.Now().Format(time.RFC3339)}, nil
 		},
 	)

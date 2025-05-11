@@ -9,9 +9,8 @@ import (
 // ClientHandle is an interface representing a client connection from the server's perspective.
 // It's passed to server-side request handlers.
 type ClientHandle interface {
-	ID() string                 // Unique ID of the client.
-	Context() context.Context   // Context associated with this client's connection.
-	RemoteAddr() string         // Network address of the client.
+	ID() string               // Unique ID of the client.
+	Context() context.Context // Context associated with this client's connection.
 
 	// Request sends a request to this specific client and waits for a response.
 	// The responsePayloadPtr argument should be a pointer to a struct where the response will be unmarshalled.

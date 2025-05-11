@@ -137,7 +137,7 @@ func (b *Broker) UpgradeHandler() http.HandlerFunc {
 		select {
 		case <-b.shutdownChan: // Or <-b.mainCtx.Done()
 			http.Error(w, "server is shutting down", http.StatusServiceUnavailable)
-			b.config.logger.Info(fmt.Sprintf("Broker: Rejected connection, server shutting down."))
+			b.config.logger.Info("Broker: Rejected connection, server shutting down.")
 			return
 		default:
 		}
@@ -298,7 +298,7 @@ func (b *Broker) GetClient(clientID string) (ClientHandle, error) {
 // Shutdown gracefully shuts down the broker.
 func (b *Broker) Shutdown(ctx context.Context) error {
 	b.shutdownOnce.Do(func() {
-		b.config.logger.Info(fmt.Sprintf("Broker: Initiating shutdown..."))
+		b.config.logger.Info("Broker: Initiating shutdown...")
 		close(b.shutdownChan) // Signal internal components that rely on this
 		b.mainCancel()        // Cancel the broker's main context, which propagates to clients
 
@@ -329,7 +329,7 @@ func (b *Broker) Shutdown(ctx context.Context) error {
 		remainingClients := len(b.managedClients)
 		b.clientsMu.RUnlock()
 		if remainingClients == 0 {
-			b.config.logger.Info(fmt.Sprintf("Broker: All clients disconnected."))
+			b.config.logger.Info("Broker: All clients disconnected.")
 			break
 		}
 		select {
@@ -344,7 +344,7 @@ func (b *Broker) Shutdown(ctx context.Context) error {
 		}
 	}
 
-	b.config.logger.Info(fmt.Sprintf("Broker: Shutdown complete."))
+	b.config.logger.Info("Broker: Shutdown complete.")
 	return nil
 }
 
@@ -374,10 +374,6 @@ type managedClient struct {
 // ID, Context, RemoteAddr, Request, Send methods for ClientHandle interface
 func (mc *managedClient) ID() string               { return mc.id }
 func (mc *managedClient) Context() context.Context { return mc.ctx }
-
-// This is not likely to be correct
-func (mc *managedClient) RemoteAddr() string { return fmt.Sprintf("%s", mc.conn) }
-
 func (mc *managedClient) Request(ctx context.Context, topic string, requestData interface{}, responsePayloadPtr interface{}, timeout time.Duration) error {
 	select {
 	case <-mc.ctx.Done():
@@ -578,7 +574,19 @@ func (mc *managedClient) handleClientRequest(reqEnv *ergosockets.Envelope) {
 		return
 	}
 
-	reqPayloadVal := reflect.New(handlerWrapper.ReqType.Elem())    // reqType is PtrToStruct, Elem gives Struct, New gives PtrToStruct
+	// Create a new instance of the request type
+	var reqPayloadVal reflect.Value
+
+	// Check if the request type is a pointer or a value type
+	if handlerWrapper.ReqType.Kind() == reflect.Ptr {
+		// If it's a pointer type, create a new instance of the pointed-to type
+		reqPayloadVal = reflect.New(handlerWrapper.ReqType.Elem())
+	} else {
+		// If it's a value type, create a new instance of the type itself
+		reqPayloadVal = reflect.New(handlerWrapper.ReqType)
+	}
+
+	// Unmarshal the payload into the new instance
 	if reqEnv.Payload != nil && string(reqEnv.Payload) != "null" { // Handle null payload for empty structs
 		if err := json.Unmarshal(reqEnv.Payload, reqPayloadVal.Interface()); err != nil {
 			mc.logger.Info(fmt.Sprintf("Broker: Failed to unmarshal request payload for topic '%s' from client %s: %v. Payload: %s", reqEnv.Topic, mc.id, err, string(reqEnv.Payload)))
@@ -589,7 +597,22 @@ func (mc *managedClient) handleClientRequest(reqEnv *ergosockets.Envelope) {
 		}
 	}
 
-	inputs := []reflect.Value{reflect.ValueOf(mc), reqPayloadVal}
+	// Prepare the input arguments for the handler function
+	var inputs []reflect.Value
+
+	// First argument is always the client handle
+	inputs = append(inputs, reflect.ValueOf(mc))
+
+	// Second argument is the request payload, which might need to be a value or a pointer
+	if handlerWrapper.ReqType.Kind() == reflect.Ptr {
+		// If handler expects a pointer, pass the pointer directly
+		inputs = append(inputs, reqPayloadVal)
+	} else {
+		// If handler expects a value, dereference the pointer
+		inputs = append(inputs, reqPayloadVal.Elem())
+	}
+
+	// Call the handler function
 	results := handlerWrapper.HandlerFunc.Call(inputs)
 
 	var errResult error

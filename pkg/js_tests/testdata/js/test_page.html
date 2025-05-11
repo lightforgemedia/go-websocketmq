@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocketMQ Test Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .card-header {
+            font-weight: bold;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .status {
+            padding: 5px 10px;
+            border-radius: 4px;
+            display: inline-block;
+            margin-left: 10px;
+        }
+        .status-connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status-disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .status-connecting {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        button {
+            padding: 8px 12px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 5px;
+        }
+        button:hover {
+            background-color: #0069d9;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        input, select {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-right: 5px;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            overflow: auto;
+        }
+        .log-entry {
+            margin: 5px 0;
+            font-family: monospace;
+        }
+        .log-info {
+            color: #0c5460;
+        }
+        .log-error {
+            color: #721c24;
+        }
+        .log-success {
+            color: #155724;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WebSocketMQ Test Page</h1>
+
+        <div class="card">
+            <div class="card-header">
+                Connection
+                <span id="connection-status" class="status status-disconnected">Disconnected</span>
+            </div>
+            <div>
+                <button id="connect-btn">Connect</button>
+                <button id="disconnect-btn" disabled>Disconnect</button>
+                <input type="hidden" id="ws-url" value="ws://localhost:8081/ws">
+            </div>
+            <div style="margin-top: 10px;">
+                <strong>Client ID:</strong> <span id="client-id">Not connected</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">Request</div>
+            <div>
+                <label for="request-topic">Topic:</label>
+                <select id="request-topic">
+                    <option value="system:get_time">system:get_time</option>
+                    <option value="user:get_details">user:get_details</option>
+                    <option value="system:error_test">system:error_test</option>
+                    <option value="server:slow_request">server:slow_request</option>
+                </select>
+
+                <div id="request-payload-container" style="margin-top: 10px; display: none;">
+                    <label for="request-payload">Payload:</label>
+                    <input type="text" id="request-payload" placeholder="JSON payload">
+                </div>
+
+                <div style="margin-top: 10px;">
+                    <button id="send-request-btn" disabled>Send Request</button>
+                </div>
+
+                <div style="margin-top: 10px;">
+                    <strong>Response:</strong>
+                    <pre id="request-response">No response yet</pre>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">Subscribe</div>
+            <div>
+                <label for="subscribe-topic">Topic:</label>
+                <select id="subscribe-topic">
+                    <option value="server:announcements">server:announcements</option>
+                </select>
+                <button id="subscribe-btn" disabled>Subscribe</button>
+                <button id="unsubscribe-btn" disabled>Unsubscribe</button>
+
+                <div style="margin-top: 10px;">
+                    <strong>Messages:</strong>
+                    <pre id="subscription-messages">No messages yet</pre>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">Server Requests</div>
+            <div>
+                <p>The server can make requests to this client on the following topics:</p>
+                <ul>
+                    <li><strong>client:get_status</strong> - Returns client status information</li>
+                    <li><strong>client:slow_request</strong> - Returns a response after a delay</li>
+                </ul>
+
+                <div style="margin-top: 10px;">
+                    <strong>Received Requests:</strong>
+                    <pre id="server-requests">No requests yet</pre>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">Log</div>
+            <div id="log-container" style="max-height: 200px; overflow-y: auto;">
+            </div>
+            <button id="clear-log-btn">Clear Log</button>
+        </div>
+    </div>
+
+    <script src="websocketmq.js"></script>
+    <script>
+        // DOM elements
+        const connectBtn = document.getElementById('connect-btn');
+        const disconnectBtn = document.getElementById('disconnect-btn');
+        const wsUrlInput = document.getElementById('ws-url');
+        const connectionStatus = document.getElementById('connection-status');
+        const clientIdSpan = document.getElementById('client-id');
+        const requestTopicSelect = document.getElementById('request-topic');
+        const requestPayloadContainer = document.getElementById('request-payload-container');
+        const requestPayloadInput = document.getElementById('request-payload');
+        const sendRequestBtn = document.getElementById('send-request-btn');
+        const requestResponsePre = document.getElementById('request-response');
+        const subscribeTopicSelect = document.getElementById('subscribe-topic');
+        const subscribeBtn = document.getElementById('subscribe-btn');
+        const unsubscribeBtn = document.getElementById('unsubscribe-btn');
+        const subscriptionMessagesPre = document.getElementById('subscription-messages');
+        const serverRequestsPre = document.getElementById('server-requests');
+        const logContainer = document.getElementById('log-container');
+        const clearLogBtn = document.getElementById('clear-log-btn');
+
+        // Client instance
+        let client = null;
+        let subscribed = false;
+
+        // Log function
+        function log(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+            console.log(`[${type}] ${message}`);
+        }
+
+        // Update UI based on connection status
+        function updateConnectionUI(isConnected) {
+            connectBtn.disabled = isConnected;
+            disconnectBtn.disabled = !isConnected;
+            sendRequestBtn.disabled = !isConnected;
+            subscribeBtn.disabled = !isConnected || subscribed;
+            unsubscribeBtn.disabled = !isConnected || !subscribed;
+
+            if (isConnected) {
+                connectionStatus.textContent = 'Connected';
+                connectionStatus.className = 'status status-connected';
+            } else {
+                connectionStatus.textContent = 'Disconnected';
+                connectionStatus.className = 'status status-disconnected';
+                clientIdSpan.textContent = 'Not connected';
+            }
+        }
+
+        // Initialize UI
+        function initUI() {
+            // Request topic change handler
+            requestTopicSelect.addEventListener('change', () => {
+                const topic = requestTopicSelect.value;
+                if (topic === 'user:get_details') {
+                    requestPayloadContainer.style.display = 'block';
+                    requestPayloadInput.value = JSON.stringify({ userID: 'user123' });
+                } else if (topic === 'system:error_test') {
+                    requestPayloadContainer.style.display = 'block';
+                    requestPayloadInput.value = JSON.stringify({ shouldError: true });
+                } else if (topic === 'server:slow_request') {
+                    requestPayloadContainer.style.display = 'block';
+                    requestPayloadInput.value = JSON.stringify({ delayMilliseconds: 500 });
+                } else {
+                    requestPayloadContainer.style.display = 'none';
+                    requestPayloadInput.value = '';
+                }
+            });
+
+            // Connect button handler
+            connectBtn.addEventListener('click', () => {
+                // Use the current host for WebSocket connections
+                const wsUrl = `ws://${location.host}/ws`;
+                wsUrlInput.value = wsUrl;
+
+                connectionStatus.textContent = 'Connecting...';
+                connectionStatus.className = 'status status-connecting';
+
+                try {
+                    client = new WebSocketMQ(wsUrl, { debug: true });
+
+                    client.on('connect', () => {
+                        log('Connected to WebSocket server', 'success');
+                        updateConnectionUI(true);
+
+                        // Register request handler for client:get_status
+                        client.onRequest('client:get_status', (payload) => {
+                            log(`Received request for client:get_status: ${JSON.stringify(payload)}`, 'info');
+
+                            const requestEntry = document.createElement('div');
+                            requestEntry.textContent = `client:get_status - ${JSON.stringify(payload)}`;
+                            serverRequestsPre.textContent = '';
+                            serverRequestsPre.appendChild(requestEntry);
+
+                            return {
+                                clientID: client.id(),
+                                status: 'Client All Systems Go!',
+                                uptime: '00:00:00' // Placeholder
+                            };
+                        });
+
+                        // Register request handler for client:slow_request
+                        client.onRequest('client:slow_request', (payload) => {
+                            log(`Received request for client:slow_request: ${JSON.stringify(payload)}`, 'info');
+
+                            const requestEntry = document.createElement('div');
+                            requestEntry.textContent = `client:slow_request - ${JSON.stringify(payload)}`;
+                            serverRequestsPre.textContent = '';
+                            serverRequestsPre.appendChild(requestEntry);
+
+                            // Return a promise that resolves after the specified delay
+                            return new Promise((resolve) => {
+                                const delay = payload.delayMilliseconds || 500;
+                                setTimeout(() => {
+                                    resolve({
+                                        message: 'Client finally responded after server-requested delay'
+                                    });
+                                }, delay);
+                            });
+                        });
+
+                        // Update client ID display
+                        if (client.id()) {
+                            clientIdSpan.textContent = client.id();
+                        }
+                    });
+
+                    client.on('disconnect', () => {
+                        log('Disconnected from WebSocket server', 'error');
+                        updateConnectionUI(false);
+                    });
+
+                    client.on('error', (error) => {
+                        log(`WebSocket error: ${error.message}`, 'error');
+                    });
+                } catch (error) {
+                    log(`Error creating WebSocketMQ client: ${error.message}`, 'error');
+                    connectionStatus.textContent = 'Disconnected';
+                    connectionStatus.className = 'status status-disconnected';
+                }
+            });
+
+            // Disconnect button handler
+            disconnectBtn.addEventListener('click', () => {
+                if (client) {
+                    client.close();
+                    client = null;
+                    subscribed = false;
+                    updateConnectionUI(false);
+                    log('Disconnected from WebSocket server', 'info');
+                }
+            });
+
+            // Send request button handler
+            sendRequestBtn.addEventListener('click', async () => {
+                if (!client) {
+                    log('Not connected to WebSocket server', 'error');
+                    return;
+                }
+
+                const topic = requestTopicSelect.value;
+                let payload = null;
+
+                if (requestPayloadContainer.style.display !== 'none') {
+                    try {
+                        payload = JSON.parse(requestPayloadInput.value);
+                    } catch (error) {
+                        log(`Invalid JSON payload: ${error.message}`, 'error');
+                        return;
+                    }
+                }
+
+                try {
+                    log(`Sending request to ${topic}${payload ? ` with payload ${JSON.stringify(payload)}` : ''}`, 'info');
+                    const response = await client.request(topic, payload);
+                    log(`Received response from ${topic}: ${JSON.stringify(response)}`, 'success');
+                    requestResponsePre.textContent = JSON.stringify(response, null, 2);
+                } catch (error) {
+                    log(`Request error: ${error.message}`, 'error');
+                    requestResponsePre.textContent = `Error: ${error.message}`;
+                }
+            });
+
+            // Subscribe button handler
+            subscribeBtn.addEventListener('click', () => {
+                if (!client) {
+                    log('Not connected to WebSocket server', 'error');
+                    return;
+                }
+
+                const topic = subscribeTopicSelect.value;
+
+                try {
+                    client.subscribe(topic, (payload) => {
+                        log(`Received message on ${topic}: ${JSON.stringify(payload)}`, 'info');
+
+                        const messageEntry = document.createElement('div');
+                        messageEntry.textContent = JSON.stringify(payload, null, 2);
+                        subscriptionMessagesPre.textContent = '';
+                        subscriptionMessagesPre.appendChild(messageEntry);
+                    });
+
+                    subscribed = true;
+                    updateConnectionUI(true);
+                    log(`Subscribed to ${topic}`, 'success');
+                } catch (error) {
+                    log(`Subscribe error: ${error.message}`, 'error');
+                }
+            });
+
+            // Unsubscribe button handler
+            unsubscribeBtn.addEventListener('click', () => {
+                if (!client) {
+                    log('Not connected to WebSocket server', 'error');
+                    return;
+                }
+
+                const topic = subscribeTopicSelect.value;
+
+                try {
+                    client.unsubscribe(topic);
+                    subscribed = false;
+                    updateConnectionUI(true);
+                    log(`Unsubscribed from ${topic}`, 'info');
+                } catch (error) {
+                    log(`Unsubscribe error: ${error.message}`, 'error');
+                }
+            });
+
+            // Clear log button handler
+            clearLogBtn.addEventListener('click', () => {
+                logContainer.innerHTML = '';
+            });
+
+            // Initialize UI state
+            updateConnectionUI(false);
+        }
+
+        // Initialize the UI when the page loads
+        document.addEventListener('DOMContentLoaded', initUI);
+    </script>
+</body>
+</html>
