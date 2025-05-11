@@ -111,8 +111,8 @@ func TestBrowserClientConnection(t *testing.T) {
 	t.Logf("WebSocket URL: %s", wsURL)
 	t.Logf("HTTP Server URL: %s", httpServer.URL)
 
-	// Create a new Rod browser
-	browser := testutil.NewRodBrowser(t, testutil.WithHeadless(true))
+	// Create a new Rod browser with headless mode disabled so we can see the browser
+	browser := testutil.NewRodBrowser(t, testutil.WithHeadless(false))
 
 	// Navigate to the test page
 	page := browser.MustPage(httpServer.URL).WaitForLoad()
@@ -163,4 +163,11 @@ func TestBrowserClientConnection(t *testing.T) {
 		return true
 	})
 	assert.Equal(t, 1, clientCount, "Should have one client connected")
+
+	// Add a delay so we can see the browser window before it closes
+	// This is only useful when running with headless=false
+	if !browser.IsHeadless() {
+		t.Log("Waiting 3 seconds so you can see the browser window...")
+		time.Sleep(3 * time.Second)
+	}
 }

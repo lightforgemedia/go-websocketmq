@@ -81,6 +81,11 @@ func (rb *RodBrowser) Close() {
 	}
 }
 
+// IsHeadless returns whether the browser is running in headless mode.
+func (rb *RodBrowser) IsHeadless() bool {
+	return rb.headless
+}
+
 // MustPage navigates to the given URL and returns a RodPage.
 func (rb *RodBrowser) MustPage(url string) *RodPage {
 	rb.t.Helper()
