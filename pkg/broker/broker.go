@@ -15,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/lightforgemedia/go-websocketmq/pkg/ergosockets"
+	"github.com/lightforgemedia/go-websocketmq/pkg/shared_types"
 )
 
 const (
@@ -127,7 +128,56 @@ func New(opts ...Option) (*Broker, error) {
 	if b.config.acceptOptions == nil {
 		b.config.acceptOptions = &websocket.AcceptOptions{} // Default allows all origins, no compression
 	}
-	b.config.logger.Info(fmt.Sprintf("Broker initialized. Ping interval: %v, Client send buffer: %d", b.config.pingInterval, b.config.clientSendBuffer))
+
+	// Add default client registration handler
+	err := b.OnRequest(shared_types.TopicClientRegister, func(client ClientHandle, req shared_types.ClientRegistration) (shared_types.ClientRegistrationResponse, error) {
+		// Get the managedClient from the ClientHandle
+		mc, ok := client.(*managedClient)
+		if !ok {
+			return shared_types.ClientRegistrationResponse{}, fmt.Errorf("invalid client type")
+		}
+
+		// Update client information
+		mc.clientID = req.ClientID
+
+		// Set client name based on provided name or URL
+		if req.ClientName != "" {
+			mc.name = req.ClientName
+		}
+
+		// Set client type
+		if req.ClientType != "" {
+			mc.clientType = req.ClientType
+		}
+
+		// Set client URL
+		if req.ClientURL != "" {
+			mc.clientURL = req.ClientURL
+		} else if mc.clientURL == "" && req.ClientType == "browser" {
+			// For browser clients without URL, use a default
+			mc.clientURL = "unknown-browser"
+		}
+
+		// Mark client as registered
+		mc.registered = true
+
+		// Log registration
+		mc.logger.Info(fmt.Sprintf("Broker: Client %s registered as %s (type: %s, URL: %s)", mc.id, mc.name, mc.clientType, mc.clientURL))
+
+		// Return response with server-assigned ID
+		return shared_types.ClientRegistrationResponse{
+			ServerAssignedID: mc.id,
+			ClientName:       mc.name,
+			ServerTime:       time.Now().Format(time.RFC3339),
+		}, nil
+	})
+
+	// Log error but don't fail if registration handler can't be added
+	if err != nil {
+		b.config.logger.Info(fmt.Sprintf("Broker: Failed to add client registration handler: %v", err))
+	}
+
+	b.config.logger.Info(fmt.Sprintf("Broker: Initialized. Ping interval: %v, Client send buffer: %d", b.config.pingInterval, b.config.clientSendBuffer))
 	return b, nil
 }
 
@@ -148,12 +198,38 @@ func (b *Broker) UpgradeHandler() http.HandlerFunc {
 			return
 		}
 
-		clientID := ergosockets.GenerateID()
+		// Get client ID from URL (client-provided ID)
+		clientProvidedID := r.URL.Query().Get("client_id")
+		if clientProvidedID == "" {
+			// If not provided, generate a temporary one
+			clientProvidedID = ergosockets.GenerateID()
+		}
+
+		// Generate a server-assigned ID (source of truth)
+		serverAssignedID := ergosockets.GenerateID()
+
+		// Get client URL if available
+		clientURL := ""
+		referer := r.Header.Get("Referer")
+		if referer != "" {
+			clientURL = referer
+		}
+
 		// Client's context is derived from broker's main context
 		clientCtx, clientCancel := context.WithCancel(b.mainCtx)
 
+		// Default client name based on ID or URL
+		clientName := "client-" + clientProvidedID[:8]
+		if clientURL != "" {
+			clientName = "browser-" + clientURL
+		}
+
 		mc := &managedClient{
-			id:                    clientID,
+			id:                    serverAssignedID,
+			clientID:              clientProvidedID,
+			name:                  clientName,
+			clientType:            "unknown", // Will be updated during registration
+			clientURL:             clientURL,
 			conn:                  conn,
 			broker:                b,
 			send:                  make(chan *ergosockets.Envelope, b.config.clientSendBuffer),
@@ -162,6 +238,7 @@ func (b *Broker) UpgradeHandler() http.HandlerFunc {
 			activeSubscriptions:   make(map[string]struct{}),
 			pendingServerRequests: make(map[string]chan *ergosockets.Envelope),
 			logger:                b.config.logger, // Pass logger to managedClient
+			registered:            false,           // Will be set to true after registration
 		}
 
 		b.addClient(mc)
@@ -269,17 +346,8 @@ func (b *Broker) Publish(ctx context.Context, topic string, payloadData interfac
 
 	b.config.logger.Info(fmt.Sprintf("Broker: Publishing message on topic '%s' to %d subscribers", topic, len(subscribersToNotify)))
 	for _, mc := range subscribersToNotify {
-		// Non-blocking send attempt. If channel is full, it's handled by writePump's slow client policy.
-		select {
-		case mc.send <- env:
-		case <-mc.ctx.Done(): // Client's own context
-			b.config.logger.Info(fmt.Sprintf("Broker: Client %s context done while trying to publish to topic '%s'", mc.id, topic))
-		default:
-			// This path means mc.send is full. The writePump will detect this, close with StatusPolicyViolation,
-			// and then removeClient will be called. So, we don't need to call removeClient directly here.
-			// Just log that the message might be dropped for this specific client due to full buffer.
-			b.config.logger.Info(fmt.Sprintf("Broker: Client %s send channel full for publish to topic '%s'. Message may be dropped if client doesn't recover quickly.", mc.id, topic))
-		}
+		// Use trySend which will count dropped messages and disconnect slow clients
+		mc.trySend(env)
 	}
 	return nil
 }
@@ -355,11 +423,15 @@ func (b *Broker) Context() context.Context {
 
 // --- managedClient (internal representation of a connected client) ---
 type managedClient struct {
-	id     string
-	conn   *websocket.Conn
-	broker *Broker
-	send   chan *ergosockets.Envelope // Buffered channel for outgoing messages
-	logger *slog.Logger
+	id         string // Server-assigned ID (source of truth)
+	clientID   string // Client-provided ID (for reference only)
+	name       string // Human-readable name for the client
+	clientType string // Type of client (e.g., "browser", "app", "service")
+	clientURL  string // URL of the client (for browser connections)
+	conn       *websocket.Conn
+	broker     *Broker
+	send       chan *ergosockets.Envelope // Buffered channel for outgoing messages
+	logger     *slog.Logger
 
 	ctx    context.Context    // Context for this client's lifetime, derived from broker.mainCtx
 	cancel context.CancelFunc // Cancels this client's context
@@ -369,10 +441,19 @@ type managedClient struct {
 
 	pendingServerRequestsMu sync.Mutex
 	pendingServerRequests   map[string]chan *ergosockets.Envelope
+
+	droppedMessagesMu sync.Mutex
+	droppedMessages   int // Counter for dropped messages due to full send buffer
+
+	registered bool // Whether the client has completed registration
 }
 
-// ID, Context, RemoteAddr, Request, Send methods for ClientHandle interface
+// Methods for ClientHandle interface
 func (mc *managedClient) ID() string               { return mc.id }
+func (mc *managedClient) ClientID() string         { return mc.clientID }
+func (mc *managedClient) Name() string             { return mc.name }
+func (mc *managedClient) ClientType() string       { return mc.clientType }
+func (mc *managedClient) ClientURL() string        { return mc.clientURL }
 func (mc *managedClient) Context() context.Context { return mc.ctx }
 func (mc *managedClient) Request(ctx context.Context, topic string, requestData interface{}, responsePayloadPtr interface{}, timeout time.Duration) error {
 	select {
@@ -468,19 +549,10 @@ func (mc *managedClient) Send(ctx context.Context, topic string, payloadData int
 		return fmt.Errorf("failed to create send envelope for client %s: %w", mc.id, err)
 	}
 
-	sendCtx, sendCancel := context.WithTimeout(ctx, mc.broker.config.writeTimeout)
-	defer sendCancel()
-	select {
-	case mc.send <- env:
-		mc.logger.Info(fmt.Sprintf("Broker: Sent direct message on topic '%s' to client %s", topic, mc.id))
-		return nil
-	case <-mc.ctx.Done():
-		return fmt.Errorf("client %s context done before sending direct message: %w", mc.id, mc.ctx.Err())
-	case <-sendCtx.Done():
-		return fmt.Errorf("timeout sending direct message to client %s: %w", mc.id, sendCtx.Err())
-	case <-ctx.Done():
-		return fmt.Errorf("sending context done before sending direct message to client %s: %w", mc.id, ctx.Err())
-	}
+	// Use trySend which will count dropped messages and disconnect slow clients
+	mc.trySend(env)
+	mc.logger.Info(fmt.Sprintf("Broker: Sent direct message on topic '%s' to client %s", topic, mc.id))
+	return nil
 }
 
 func (mc *managedClient) readPump() {
@@ -702,11 +774,26 @@ func (mc *managedClient) handleUnsubscribeRequest(env *ergosockets.Envelope) {
 func (mc *managedClient) trySend(env *ergosockets.Envelope) {
 	select {
 	case mc.send <- env:
+		// Message sent successfully
 	case <-mc.ctx.Done():
 		mc.logger.Info(fmt.Sprintf("Broker: Client %s context done, cannot send envelope type %s on topic %s", mc.id, env.Type, env.Topic))
 	default: // Should only happen if send channel is full and writePump is also blocked/slow
 		mc.logger.Info(fmt.Sprintf("Broker: Client %s send channel full when trying to send envelope type %s on topic %s. Message potentially dropped.", mc.id, env.Type, env.Topic))
-		// This indicates a slow client; writePump should eventually close it.
+
+		// This indicates a slow client; disconnect it after a few dropped messages
+		mc.droppedMessagesMu.Lock()
+		mc.droppedMessages++
+		droppedCount := mc.droppedMessages
+		mc.droppedMessagesMu.Unlock()
+
+		// If we've dropped too many messages, disconnect the client
+		if droppedCount >= 3 { // Threshold for disconnection
+			mc.logger.Info(fmt.Sprintf("Broker: Client %s dropped %d messages, disconnecting slow client.", mc.id, droppedCount))
+			// Close the connection; readPump's defer will handle full removeClient
+			mc.conn.Close(websocket.StatusPolicyViolation, "too many dropped messages")
+			// Also remove the client directly to ensure it's removed immediately
+			go mc.broker.removeClient(mc)
+		}
 	}
 }
 

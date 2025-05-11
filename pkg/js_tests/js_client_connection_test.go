@@ -1,6 +1,3 @@
-//go:build js_client
-// +build js_client
-
 package js_tests
 
 import (
@@ -9,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lightforgemedia/go-websocketmq/pkg/js_tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,7 +13,7 @@ import (
 // TestJSClient_Connection tests the JavaScript client connection functionality
 func TestJSClient_Connection(t *testing.T) {
 	// Create a test server
-	server := js_tests.NewTestServer(t)
+	server := NewTestServer(t)
 	defer server.Close()
 
 	// Start a browser and navigate to the test page
@@ -109,7 +105,7 @@ func TestJSClient_Connection(t *testing.T) {
 		time.Sleep(1 * time.Second)
 
 		// Restart the server
-		server = js_tests.NewTestServer(t)
+		server = NewTestServer(t)
 		defer server.Close()
 
 		// Update the page with the new server URL

@@ -1,6 +1,3 @@
-//go:build js_client
-// +build js_client
-
 package js_tests
 
 import (
@@ -39,7 +36,7 @@ func TestJSClient_Minimal(t *testing.T) {
 	defer fileServer.Close()
 
 	// Launch a browser
-	l := launcher.New().Headless(true).MustLaunch()
+	l := launcher.New().Headless(false).MustLaunch()
 	browser := rod.New().ControlURL(l).MustConnect()
 	defer browser.MustClose()
 

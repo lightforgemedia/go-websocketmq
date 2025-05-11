@@ -10,12 +10,14 @@ import (
 	"math/rand" // For jitter
 	"net/http"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/lightforgemedia/go-websocketmq/pkg/ergosockets"
+	"github.com/lightforgemedia/go-websocketmq/pkg/shared_types"
 )
 
 const (
@@ -41,6 +43,9 @@ type clientConfig struct {
 	reconnectAttempts     int // 0 for infinite if autoReconnect is true
 	reconnectDelayMin     time.Duration
 	reconnectDelayMax     time.Duration
+	clientName            string
+	clientType            string
+	clientURL             string
 }
 
 // Client is a WebSocket client for ErgoSockets.
@@ -134,6 +139,27 @@ func WithAutoReconnect(maxAttempts int, minDelay, maxDelay time.Duration) Option
 	}
 }
 
+// WithClientName sets a custom name for the client.
+func WithClientName(name string) Option {
+	return func(c *Client) {
+		c.config.clientName = name
+	}
+}
+
+// WithClientType sets the client type.
+func WithClientType(clientType string) Option {
+	return func(c *Client) {
+		c.config.clientType = clientType
+	}
+}
+
+// WithClientURL sets the client URL.
+func WithClientURL(url string) Option {
+	return func(c *Client) {
+		c.config.clientURL = url
+	}
+}
+
 // Connect establishes a WebSocket connection.
 func Connect(urlStr string, opts ...Option) (*Client, error) {
 	clientCtx, clientCancel := context.WithCancel(context.Background())
@@ -212,12 +238,21 @@ func (c *Client) establishConnection(ctx context.Context) error {
 	}
 	c.connMu.Unlock() // Unlock before Dial, as Dial is blocking
 
+	// Add client ID to the URL as a query parameter
+	urlWithID := c.urlStr
+	if !strings.Contains(urlWithID, "?") {
+		urlWithID += "?"
+	} else {
+		urlWithID += "&"
+	}
+	urlWithID += "client_id=" + c.id
+
 	dialCtx, dialCancel := context.WithTimeout(ctx, c.config.defaultRequestTimeout) // Use request timeout for dial
-	conn, httpResp, err := websocket.Dial(dialCtx, c.urlStr, c.config.dialOptions)
+	conn, httpResp, err := websocket.Dial(dialCtx, urlWithID, c.config.dialOptions)
 	dialCancel()
 
 	if err != nil {
-		errMsg := fmt.Sprintf("dial to %s failed: %v", c.urlStr, err)
+		errMsg := fmt.Sprintf("dial to %s failed: %v", urlWithID, err)
 		if httpResp != nil {
 			errMsg = fmt.Sprintf("%s (status: %s)", errMsg, httpResp.Status)
 		}
@@ -242,8 +277,64 @@ func (c *Client) establishConnection(ctx context.Context) error {
 
 	c.config.logger.Info(fmt.Sprintf("Client %s: Successfully connected to %s", c.id, c.urlStr))
 
+	// Send client registration information
+	err = c.sendRegistration()
+	if err != nil {
+		c.config.logger.Info(fmt.Sprintf("Client %s: Failed to send registration: %v", c.id, err))
+		// Close the connection and return error
+		c.connMu.Lock()
+		if c.conn != nil {
+			c.conn.Close(websocket.StatusInternalError, "registration failed")
+			c.conn = nil
+		}
+		c.connMu.Unlock()
+		return fmt.Errorf("failed to register client: %w", err)
+	}
+
 	// Re-send subscription requests upon successful (re)connection
 	c.resubscribeAll()
+	return nil
+}
+
+// sendRegistration sends client registration information to the server
+func (c *Client) sendRegistration() error {
+	// Create registration payload
+	clientURL := c.config.clientURL
+	if clientURL == "" {
+		clientURL = ""
+	}
+
+	clientType := c.config.clientType
+	if clientType == "" {
+		clientType = "generic"
+	}
+
+	// If client name is not set, generate a default one
+	clientName := c.config.clientName
+	if clientName == "" {
+		clientName = "client-" + c.id[:8]
+	}
+
+	// Create registration request
+	registration := shared_types.ClientRegistration{
+		ClientID:   c.id,
+		ClientName: clientName,
+		ClientType: clientType,
+		ClientURL:  clientURL,
+	}
+
+	// Send registration request and wait for response
+	response, err := GenericRequest[shared_types.ClientRegistrationResponse](c, context.Background(), shared_types.TopicClientRegister, registration)
+	if err != nil {
+		return fmt.Errorf("registration request failed: %w", err)
+	}
+
+	// Update client ID with server-assigned ID
+	if response != nil && response.ServerAssignedID != "" {
+		c.config.logger.Info(fmt.Sprintf("Client %s: Server assigned new ID: %s", c.id, response.ServerAssignedID))
+		c.id = response.ServerAssignedID
+	}
+
 	return nil
 }
 
@@ -496,28 +587,38 @@ func (c *Client) readPump() {
 }
 
 func (c *Client) invokeSubscriptionHandler(hw *ergosockets.HandlerWrapper, env *ergosockets.Envelope) {
-	// func(MsgStruct) error
-	msgVal := reflect.New(hw.MsgType.Elem()) // msgType is PtrToStruct, Elem gives Struct, New gives PtrToStruct
+	// func(MsgStruct) error or func(*MsgStruct) error
+	var msgVal reflect.Value
+	var msgType reflect.Type = hw.MsgType
+
+	// Check if the message type is a pointer or a value type
+	if msgType.Kind() == reflect.Ptr {
+		// If it's a pointer type (*MsgStruct), get the element type (MsgStruct)
+		elemType := msgType.Elem()
+		// Create a new pointer to the element type (**MsgStruct)
+		msgVal = reflect.New(elemType)
+	} else {
+		// If it's a value type (MsgStruct), create a new pointer to it (*MsgStruct)
+		msgVal = reflect.New(msgType)
+	}
+
+	// Decode the payload into the created value
 	if err := env.DecodePayload(msgVal.Interface()); err != nil {
 		c.config.logger.Info(fmt.Sprintf("Client %s: Failed to decode publish payload for topic '%s' into %s: %v. Payload: %s", c.id, env.Topic, hw.MsgType.String(), err, string(env.Payload)))
 		return
 	}
-	// Call handler: func(MsgStruct) error where MsgStruct is the concrete type, not pointer.
-	// If hw.MsgType is *S, then msgVal is **S. msgVal.Elem() is *S.
-	// If hw.MsgType is S, then msgVal is *S.
-	// The handler expects S, so we pass msgVal.Elem().Interface() if msgType was S (meaning reqVal is *S).
-	// Or, if handler expects *S, we pass msgVal.Interface().
-	// The NewHandlerWrapper ensures msgType is the actual type expected by the handler func.
-	// If handler is func(S), msgType is S. reqVal is *S. We need to pass S.
-	// If handler is func(*S), msgType is *S. reqVal is **S. We need to pass *S.
 
+	// Prepare the argument for the handler function
 	var arg reflect.Value
-	if hw.MsgType.Kind() == reflect.Ptr { // Handler expects *MsgStruct
+	if msgType.Kind() == reflect.Ptr {
+		// If handler expects *MsgStruct, pass the pointer directly
 		arg = msgVal
-	} else { // Handler expects MsgStruct
+	} else {
+		// If handler expects MsgStruct, dereference the pointer to get the value
 		arg = msgVal.Elem()
 	}
 
+	// Call the handler function
 	results := hw.HandlerFunc.Call([]reflect.Value{arg})
 	if errVal, ok := results[0].Interface().(error); ok && errVal != nil {
 		c.config.logger.Info(fmt.Sprintf("Client %s: Subscription handler for topic '%s' returned error: %v", c.id, env.Topic, errVal))
@@ -526,7 +627,20 @@ func (c *Client) invokeSubscriptionHandler(hw *ergosockets.HandlerWrapper, env *
 
 func (c *Client) invokeClientRequestHandler(hw *ergosockets.HandlerWrapper, reqEnv *ergosockets.Envelope) {
 	// func(ReqStruct) (RespStruct, error) OR func(ReqStruct) error
-	reqVal := reflect.New(hw.ReqType.Elem())
+	var reqVal reflect.Value
+	var reqType reflect.Type = hw.ReqType
+
+	// Check if the request type is a pointer or a value type
+	if reqType.Kind() == reflect.Ptr {
+		// If it's a pointer type (*ReqStruct), get the element type (ReqStruct)
+		elemType := reqType.Elem()
+		// Create a new pointer to the element type (**ReqStruct)
+		reqVal = reflect.New(elemType)
+	} else {
+		// If it's a value type (ReqStruct), create a new pointer to it (*ReqStruct)
+		reqVal = reflect.New(reqType)
+	}
+
 	if err := reqEnv.DecodePayload(reqVal.Interface()); err != nil {
 		c.config.logger.Info(fmt.Sprintf("Client %s: Failed to decode server request payload for topic '%s' into %s: %v. Payload: %s", c.id, reqEnv.Topic, hw.ReqType.String(), err, string(reqEnv.Payload)))
 		errResp, _ := ergosockets.NewEnvelope(reqEnv.ID, ergosockets.TypeError, reqEnv.Topic, nil, &ergosockets.ErrorPayload{Code: http.StatusBadRequest, Message: "Invalid request payload from server"})
@@ -535,7 +649,7 @@ func (c *Client) invokeClientRequestHandler(hw *ergosockets.HandlerWrapper, reqE
 	}
 
 	var arg reflect.Value
-	if hw.ReqType.Kind() == reflect.Ptr { // Handler expects *ReqStruct
+	if reqType.Kind() == reflect.Ptr { // Handler expects *ReqStruct
 		arg = reqVal
 	} else { // Handler expects ReqStruct
 		arg = reqVal.Elem()
@@ -973,7 +1087,7 @@ func GenericRequest[T any](cli *Client, ctx context.Context, topic string, reqDa
 	}
 
 	// If rawPayload is nil or points to JSON "null"
-	if rawPayload == nil || (rawPayload != nil && string(*rawPayload) == "null") {
+	if rawPayload == nil || string(*rawPayload) == "null" {
 		var zero T
 		// If T is a pointer type or an empty struct, a null payload might be acceptable.
 		rt := reflect.TypeOf(zero)

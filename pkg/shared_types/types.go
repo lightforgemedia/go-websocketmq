@@ -13,6 +13,7 @@ const (
 	TopicSlowClientRequest = "client:slow_request" // Server sends to client, client is slow
 	TopicSlowServerRequest = "server:slow_request" // Client sends to server, server is slow
 	TopicBroadcastTest     = "test:broadcast"
+	TopicClientRegister    = "system:register" // Client registration
 )
 
 // --- Message Structs ---
@@ -91,4 +92,19 @@ type SlowServerResponse struct {
 type BroadcastMessage struct {
 	Content string    `json:"content"`
 	SentAt  time.Time `json:"sentAt"`
+}
+
+// ClientRegistration is sent by the client during connection to provide identity information
+type ClientRegistration struct {
+	ClientID   string `json:"clientId"`   // Client-generated ID
+	ClientName string `json:"clientName"` // Human-readable name for the client
+	ClientType string `json:"clientType"` // Type of client (e.g., "browser", "app", "service")
+	ClientURL  string `json:"clientUrl"`  // URL of the client (for browser connections)
+}
+
+// ClientRegistrationResponse is sent by the server to confirm client registration
+type ClientRegistrationResponse struct {
+	ServerAssignedID string `json:"serverAssignedId"` // Server-generated ID that becomes the source of truth
+	ClientName       string `json:"clientName"`       // Confirmed or modified client name
+	ServerTime       string `json:"serverTime"`       // Server time for synchronization
 }
