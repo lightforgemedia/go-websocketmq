@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -19,8 +17,7 @@ import (
 	"github.com/lightforgemedia/go-websocketmq/pkg/testutil"
 )
 
-var testSlogHandlerClient = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug, AddSource: true})
-var testLoggerClient = slog.New(testSlogHandlerClient)
+// Use the testutil package's logger instead of defining our own
 
 func TestClientConnectAndRequest(t *testing.T) {
 	ms := testutil.NewMockServer(t, func(conn *websocket.Conn, srv *testutil.MockServer) { // srv is the mockServer instance
@@ -59,7 +56,7 @@ func TestClientConnectAndRequest(t *testing.T) {
 	})
 	defer ms.Close()
 
-	cli := newTestClient(t, ms.WsURL)
+	cli := testutil.NewTestClient(t, ms.WsURL)
 	defer cli.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -140,7 +137,7 @@ func TestClientSubscribeAndReceive(t *testing.T) {
 	})
 	defer ms.Close()
 
-	cli := newTestClient(t, ms.WsURL)
+	cli := testutil.NewTestClient(t, ms.WsURL)
 	defer cli.Close()
 
 	receivedChan := make(chan app_shared_types.ServerAnnouncement, 1)
@@ -247,7 +244,7 @@ func TestClientAutoReconnect(t *testing.T) {
 	})
 	defer ms.Close()
 
-	cli := newTestClient(t, ms.WsURL,
+	cli := testutil.NewTestClient(t, ms.WsURL,
 		client.WithAutoReconnect(3, 50*time.Millisecond, 200*time.Millisecond), // Fast reconnect for test
 	)
 	defer cli.Close()
@@ -323,7 +320,7 @@ func TestClientRequestVariadicPayload(t *testing.T) {
 	})
 	defer ms.Close()
 
-	cli := newTestClient(t, ms.WsURL)
+	cli := testutil.NewTestClient(t, ms.WsURL)
 	defer cli.Close()
 	ctx := context.Background()
 
@@ -355,18 +352,4 @@ func TestClientRequestVariadicPayload(t *testing.T) {
 	t.Logf("Request with payload sent, server received: %s", string(lastReceivedPayload))
 }
 
-// newTestClient is a helper from broker_test, adapted slightly
-func newTestClient(t *testing.T, urlStr string, opts ...client.Option) *client.Client {
-	t.Helper()
-	finalOpts := append([]client.Option{client.WithLogger(testLoggerClient)}, opts...)
-	c, err := client.Connect(urlStr, finalOpts...)
-	if err != nil && c == nil { // Only fatal if client is nil (no reconnect possible)
-		t.Fatalf("Failed to connect client and client is nil: %v", err)
-	}
-	if c == nil {
-		t.Fatal("Connect returned nil client")
-	}
-	// Give a brief moment for connection to establish, especially if reconnecting
-	time.Sleep(100 * time.Millisecond)
-	return c
-}
+// Use testutil.NewTestClient instead of defining our own

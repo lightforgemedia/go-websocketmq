@@ -1,15 +1,12 @@
 package testutil
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/lightforgemedia/go-websocketmq/pkg/broker"
-	"github.com/lightforgemedia/go-websocketmq/pkg/client"
 	"github.com/lightforgemedia/go-websocketmq/pkg/ergosockets"
-	app_shared_types "github.com/lightforgemedia/go-websocketmq/pkg/shared_types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,18 +25,7 @@ func TestNewBrokerServer(t *testing.T) {
 	assert.Contains(t, bs.WSURL, "ws://", "WebSocket URL should contain ws://")
 }
 
-// TestNewTestServer is kept for backward compatibility
-func TestNewTestServer(t *testing.T) {
-	// Use BrokerServer instead
-	bs := NewBrokerServer(t)
-
-	// Verify that the test server is created
-	assert.NotNil(t, bs, "BrokerServer should not be nil")
-	assert.NotNil(t, bs.Broker, "BrokerServer broker should not be nil")
-	assert.NotNil(t, bs.HTTP, "BrokerServer HTTP server should not be nil")
-	assert.NotEmpty(t, bs.WSURL, "BrokerServer WebSocket URL should not be empty")
-	assert.Contains(t, bs.WSURL, "ws://", "BrokerServer WebSocket URL should contain ws://")
-}
+// TestNewTestServer has been removed as we've consolidated to BrokerServer
 
 func TestWaitForClient(t *testing.T) {
 	if testing.Short() {
@@ -125,23 +111,4 @@ func TestMockServer(t *testing.T) {
 	assert.NotNil(t, cli, "Client should not be nil")
 }
 
-func TestBrokerRequestResponse(t *testing.T) {
-	bs := NewBrokerServer(t)
-
-	err := bs.OnRequest(app_shared_types.TopicGetTime,
-		func(ch broker.ClientHandle, req app_shared_types.GetTimeRequest) (app_shared_types.GetTimeResponse, error) {
-			t.Logf("TestBroker: Server handler for %s invoked by client %s", app_shared_types.TopicGetTime, ch.ID())
-			return app_shared_types.GetTimeResponse{CurrentTime: "test-time"}, nil
-		},
-	)
-	require.NoError(t, err, "Failed to register server handler")
-
-	cli := NewTestClient(t, bs.WSURL)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	resp, err := client.GenericRequest[app_shared_types.GetTimeResponse](cli, ctx, app_shared_types.TopicGetTime)
-	require.NoError(t, err, "Client request failed")
-	assert.Equal(t, "test-time", resp.CurrentTime, "Expected response 'test-time'")
-}
+// TestBrokerRequestResponse has been moved to broker_test.go

@@ -88,51 +88,8 @@ func TestBrokerWaitForClient(t *testing.T) {
 	}
 	t.Logf("=======Client connected. ID: %s", clientHandle.ID())
 
-	// clientHandlerInvoked := make(chan bool, 1)
-	// expectedClientUptime := "test-uptime-refined"
-	// err := cli.OnRequest(app_shared_types.TopicClientGetStatus,
-	// 	func(req app_shared_types.ClientStatusQuery) (app_shared_types.ClientStatusReport, error) {
-	// 		t.Logf("TestBroker: Client OnRequest handler for %s invoked with query: %s", app_shared_types.TopicClientGetStatus, req.QueryDetailLevel)
-	// 		clientHandlerInvoked <- true
-	// 		return app_shared_types.ClientStatusReport{ClientID: cli.ID(), Status: "client-test-ok-refined", Uptime: expectedClientUptime}, nil
-	// 	},
-	// )
-	// if err != nil {
-	// 	t.Fatalf("Client failed to register OnRequest handler: %v", err)
-	// }
-
-	// clientHandle, err := testutil.WaitForClient(t, b, cli.ID(), 5*time.Second)
-	// if err != nil {
-	// 	t.Fatalf("Failed to get client handle from broker: %v", err)
-	// }
-
-	// var responsePayload app_shared_types.ClientStatusReport
-	// ctxReq, cancelReq := context.WithTimeout(context.Background(), 2*time.Second)
-	// defer cancelReq()
-
-	// // ClientHandle.Request takes responsePayloadPtr interface{}
-	// err = clientHandle.Request(ctxReq, app_shared_types.TopicClientGetStatus,
-	// 	app_shared_types.ClientStatusQuery{QueryDetailLevel: "full-refined"}, &responsePayload, 0)
-
-	// if err != nil {
-	// 	t.Fatalf("Server failed to make request to client: %v", err)
-	// }
-
-	// select {
-	// case <-clientHandlerInvoked:
-	// 	t.Log("Client OnRequest handler was invoked.")
-	// case <-time.After(1 * time.Second):
-	// 	t.Fatal("Client OnRequest handler was not invoked in time.")
-	// }
-
-	// if responsePayload.Status != "client-test-ok-refined" || responsePayload.Uptime != expectedClientUptime {
-	// 	t.Errorf("Expected client status 'client-test-ok-refined' and uptime '%s', got status '%s', uptime '%s'",
-	// 		expectedClientUptime, responsePayload.Status, responsePayload.Uptime)
-	// }
-	// if responsePayload.ClientID != cli.ID() {
-	// 	t.Errorf("Expected client ID '%s', got '%s'", cli.ID(), responsePayload.ClientID)
-	// }
-	// t.Logf("Server received correct status response from client: %+v", responsePayload)
+	// This test just verifies that we can get a client handle from the broker
+	// The actual client-to-server request functionality is tested in TestBrokerClientToServerRequest
 }
 
 func TestBrokerClientToServerRequest(t *testing.T) {
