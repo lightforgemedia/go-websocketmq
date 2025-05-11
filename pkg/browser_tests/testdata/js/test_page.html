@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocketMQ Test Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        h1, h2 {
+            color: #333;
+        }
+        button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 10px 15px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 14px;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 8px;
+            margin: 8px 0;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        #log {
+            background-color: #f8f8f8;
+            border: 1px solid #ddd;
+            padding: 10px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+        .success {
+            color: green;
+        }
+        .error {
+            color: red;
+        }
+        .info {
+            color: blue;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WebSocketMQ Test Page</h1>
+        
+        <div class="card">
+            <h2>Connection</h2>
+            <div>
+                <label for="wsUrl">WebSocket URL:</label>
+                <input type="text" id="wsUrl" value="ws://localhost:8090/ws" />
+            </div>
+            <div>
+                <label for="clientName">Client Name:</label>
+                <input type="text" id="clientName" value="TestBrowser" />
+            </div>
+            <div>
+                <button id="connectBtn">Connect</button>
+                <button id="disconnectBtn">Disconnect</button>
+                <span id="connectionStatus">Disconnected</span>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>Request</h2>
+            <div>
+                <label for="requestTopic">Topic:</label>
+                <input type="text" id="requestTopic" value="system:get_time" />
+            </div>
+            <div>
+                <label for="requestPayload">Payload (JSON):</label>
+                <textarea id="requestPayload" rows="3">{}</textarea>
+            </div>
+            <div>
+                <button id="sendRequestBtn">Send Request</button>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>Publish</h2>
+            <div>
+                <label for="publishTopic">Topic:</label>
+                <input type="text" id="publishTopic" value="test:publish" />
+            </div>
+            <div>
+                <label for="publishPayload">Payload (JSON):</label>
+                <textarea id="publishPayload" rows="3">{"message": "Hello from browser!"}</textarea>
+            </div>
+            <div>
+                <button id="publishBtn">Publish</button>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>Subscribe</h2>
+            <div>
+                <label for="subscribeTopic">Topic:</label>
+                <input type="text" id="subscribeTopic" value="server:announcements" />
+            </div>
+            <div>
+                <button id="subscribeBtn">Subscribe</button>
+                <button id="unsubscribeBtn">Unsubscribe</button>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>Log</h2>
+            <div id="log"></div>
+            <button id="clearLogBtn">Clear Log</button>
+        </div>
+    </div>
+
+    <script src="/websocketmq.js"></script>
+    <script>
+        // Custom logger that writes to the log div
+        const logger = {
+            log: function(msg) { appendToLog(msg, ''); },
+            info: function(msg) { appendToLog(msg, 'info'); },
+            debug: function(msg) { appendToLog(msg, ''); },
+            warn: function(msg) { appendToLog(msg, 'warn'); },
+            error: function(msg) { appendToLog(msg, 'error'); }
+        };
+
+        // Global client instance
+        let client = null;
+        let unsubscribeFn = null;
+
+        // DOM elements
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const sendRequestBtn = document.getElementById('sendRequestBtn');
+        const publishBtn = document.getElementById('publishBtn');
+        const subscribeBtn = document.getElementById('subscribeBtn');
+        const unsubscribeBtn = document.getElementById('unsubscribeBtn');
+        const clearLogBtn = document.getElementById('clearLogBtn');
+        const logDiv = document.getElementById('log');
+
+        // Helper function to append to log
+        function appendToLog(message, type) {
+            const entry = document.createElement('div');
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            if (type) entry.classList.add(type);
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        // Connect button
+        connectBtn.addEventListener('click', () => {
+            const url = document.getElementById('wsUrl').value;
+            const clientName = document.getElementById('clientName').value;
+            
+            if (client) {
+                appendToLog('Already connected or connecting. Disconnect first.', 'warn');
+                return;
+            }
+            
+            try {
+                client = new WebSocketMQ.Client({
+                    url: url,
+                    clientName: clientName,
+                    logger: logger
+                });
+                
+                client.onConnect(() => {
+                    connectionStatus.textContent = 'Connected';
+                    connectionStatus.style.color = 'green';
+                    appendToLog(`Connected to ${url} with client ID: ${client.getID()}`, 'success');
+                });
+                
+                client.onDisconnect(() => {
+                    connectionStatus.textContent = 'Disconnected';
+                    connectionStatus.style.color = 'red';
+                    appendToLog('Disconnected from server', 'info');
+                });
+                
+                client.onError((err) => {
+                    appendToLog(`Error: ${err.message}`, 'error');
+                });
+                
+                client.connect();
+                appendToLog('Connecting...', 'info');
+            } catch (err) {
+                appendToLog(`Failed to create client: ${err.message}`, 'error');
+            }
+        });
+
+        // Disconnect button
+        disconnectBtn.addEventListener('click', () => {
+            if (!client) {
+                appendToLog('Not connected.', 'warn');
+                return;
+            }
+            
+            client.disconnect();
+            client = null;
+        });
+
+        // Send request button
+        sendRequestBtn.addEventListener('click', () => {
+            if (!client || !client.isConnected) {
+                appendToLog('Not connected. Connect first.', 'warn');
+                return;
+            }
+            
+            const topic = document.getElementById('requestTopic').value;
+            const payloadStr = document.getElementById('requestPayload').value;
+            
+            try {
+                const payload = payloadStr ? JSON.parse(payloadStr) : null;
+                appendToLog(`Sending request to topic '${topic}'...`, 'info');
+                
+                client.request(topic, payload)
+                    .then(response => {
+                        appendToLog(`Received response: ${JSON.stringify(response)}`, 'success');
+                    })
+                    .catch(err => {
+                        appendToLog(`Request failed: ${err.message}`, 'error');
+                    });
+            } catch (err) {
+                appendToLog(`Invalid JSON payload: ${err.message}`, 'error');
+            }
+        });
+
+        // Publish button
+        publishBtn.addEventListener('click', () => {
+            if (!client || !client.isConnected) {
+                appendToLog('Not connected. Connect first.', 'warn');
+                return;
+            }
+            
+            const topic = document.getElementById('publishTopic').value;
+            const payloadStr = document.getElementById('publishPayload').value;
+            
+            try {
+                const payload = payloadStr ? JSON.parse(payloadStr) : null;
+                appendToLog(`Publishing to topic '${topic}'...`, 'info');
+                
+                client.publish(topic, payload)
+                    .then(() => {
+                        appendToLog(`Published to topic '${topic}'`, 'success');
+                    })
+                    .catch(err => {
+                        appendToLog(`Publish failed: ${err.message}`, 'error');
+                    });
+            } catch (err) {
+                appendToLog(`Invalid JSON payload: ${err.message}`, 'error');
+            }
+        });
+
+        // Subscribe button
+        subscribeBtn.addEventListener('click', () => {
+            if (!client || !client.isConnected) {
+                appendToLog('Not connected. Connect first.', 'warn');
+                return;
+            }
+            
+            if (unsubscribeFn) {
+                appendToLog('Already subscribed. Unsubscribe first.', 'warn');
+                return;
+            }
+            
+            const topic = document.getElementById('subscribeTopic').value;
+            appendToLog(`Subscribing to topic '${topic}'...`, 'info');
+            
+            try {
+                unsubscribeFn = client.subscribe(topic, (payload) => {
+                    appendToLog(`Received message on topic '${topic}': ${JSON.stringify(payload)}`, 'info');
+                });
+                appendToLog(`Subscribed to topic '${topic}'`, 'success');
+            } catch (err) {
+                appendToLog(`Subscribe failed: ${err.message}`, 'error');
+            }
+        });
+
+        // Unsubscribe button
+        unsubscribeBtn.addEventListener('click', () => {
+            if (!unsubscribeFn) {
+                appendToLog('Not subscribed.', 'warn');
+                return;
+            }
+            
+            const topic = document.getElementById('subscribeTopic').value;
+            unsubscribeFn();
+            unsubscribeFn = null;
+            appendToLog(`Unsubscribed from topic '${topic}'`, 'info');
+        });
+
+        // Clear log button
+        clearLogBtn.addEventListener('click', () => {
+            logDiv.innerHTML = '';
+        });
+    </script>
+</body>
+</html>

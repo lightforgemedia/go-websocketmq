@@ -27,13 +27,14 @@ const (
 )
 
 type brokerConfig struct {
-	logger               *slog.Logger // Refined: Logger interface
-	acceptOptions        *websocket.AcceptOptions
-	clientSendBuffer     int // Refined: For outgoing messages per client
-	writeTimeout         time.Duration
-	readTimeout          time.Duration
-	pingInterval         time.Duration // 0 means use libraryDefaultPingInterval, <0 means disable
-	serverRequestTimeout time.Duration
+	logger                *slog.Logger // Refined: Logger interface
+	acceptOptions         *websocket.AcceptOptions
+	clientSendBuffer      int // Refined: For outgoing messages per client
+	writeTimeout          time.Duration
+	readTimeout           time.Duration
+	pingInterval          time.Duration // 0 means use libraryDefaultPingInterval, <0 means disable
+	serverRequestTimeout  time.Duration
+	serveJavaScriptClient bool // Whether to serve the JavaScript client
 }
 
 // Broker manages client connections and message routing.

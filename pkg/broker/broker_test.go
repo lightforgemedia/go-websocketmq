@@ -10,13 +10,13 @@ import (
 	"github.com/lightforgemedia/go-websocketmq/pkg/broker"
 	"github.com/lightforgemedia/go-websocketmq/pkg/client"
 	app_shared_types "github.com/lightforgemedia/go-websocketmq/pkg/shared_types"
-	"github.com/lightforgemedia/go-websocketmq/testutil"
+	"github.com/lightforgemedia/go-websocketmq/pkg/testutil"
 )
 
 func TestBrokerRequestResponse(t *testing.T) {
-	b, _, wsURL := testutil.NewTestBroker(t)
+	bs := testutil.NewBrokerServer(t)
 
-	err := b.OnRequest(app_shared_types.TopicGetTime,
+	err := bs.OnRequest(app_shared_types.TopicGetTime,
 		func(ch broker.ClientHandle, req app_shared_types.GetTimeRequest) (app_shared_types.GetTimeResponse, error) {
 			t.Logf("TestBroker: Server handler for %s invoked by client %s", app_shared_types.TopicGetTime, ch.ID())
 			return app_shared_types.GetTimeResponse{CurrentTime: "test-time-refined"}, nil
@@ -26,7 +26,7 @@ func TestBrokerRequestResponse(t *testing.T) {
 		t.Fatalf("Failed to register server handler: %v", err)
 	}
 
-	cli := testutil.NewTestClient(t, wsURL)
+	cli := testutil.NewTestClient(t, bs.WSURL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -43,9 +43,9 @@ func TestBrokerRequestResponse(t *testing.T) {
 }
 
 func TestBrokerPublishSubscribe(t *testing.T) {
-	b, _, wsURL := testutil.NewTestBroker(t)
+	bs := testutil.NewBrokerServer(t)
 
-	cli := testutil.NewTestClient(t, wsURL)
+	cli := testutil.NewTestClient(t, bs.WSURL)
 
 	receivedChan := make(chan app_shared_types.ServerAnnouncement, 1)
 	_, err := cli.Subscribe(app_shared_types.TopicServerAnnounce,
@@ -61,7 +61,7 @@ func TestBrokerPublishSubscribe(t *testing.T) {
 	time.Sleep(150 * time.Millisecond) // Allow subscribe to propagate
 
 	testAnnouncement := app_shared_types.ServerAnnouncement{Message: "hello-broker-test-refined", Timestamp: "nowish"}
-	err = b.Publish(context.Background(), app_shared_types.TopicServerAnnounce, testAnnouncement)
+	err = bs.Publish(context.Background(), app_shared_types.TopicServerAnnounce, testAnnouncement)
 	if err != nil {
 		t.Fatalf("Broker failed to publish: %v", err)
 	}
@@ -78,11 +78,11 @@ func TestBrokerPublishSubscribe(t *testing.T) {
 }
 
 func TestBrokerWaitForClient(t *testing.T) {
-	b, _, wsURL := testutil.NewTestBroker(t, broker.WithPingInterval(-1)) // Disable pings for predictability
+	bs := testutil.NewBrokerServer(t, broker.WithPingInterval(-1)) // Disable pings for predictability
 
-	cli := testutil.NewTestClient(t, wsURL, client.WithClientPingInterval(-1)) // Disable client pings too
+	cli := testutil.NewTestClient(t, bs.WSURL, client.WithClientPingInterval(-1)) // Disable client pings too
 
-	clientHandle, err := testutil.WaitForClient(t, b, cli.ID(), 5*time.Second)
+	clientHandle, err := testutil.WaitForClient(t, bs.Broker, cli.ID(), 5*time.Second)
 	if err != nil {
 		t.Fatalf("Failed to get client handle from broker: %v. Client ID: %s", err, cli.ID())
 	}
@@ -136,9 +136,9 @@ func TestBrokerWaitForClient(t *testing.T) {
 }
 
 func TestBrokerClientToServerRequest(t *testing.T) {
-	b, _, wsURL := testutil.NewTestBroker(t, broker.WithPingInterval(-1)) // Disable pings for predictability
+	bs := testutil.NewBrokerServer(t, broker.WithPingInterval(-1)) // Disable pings for predictability
 
-	cli := testutil.NewTestClient(t, wsURL, client.WithClientPingInterval(-1)) // Disable client pings too
+	cli := testutil.NewTestClient(t, bs.WSURL, client.WithClientPingInterval(-1)) // Disable client pings too
 
 	clientHandlerInvoked := make(chan bool, 1)
 	expectedClientUptime := "test-uptime-refined"
@@ -153,7 +153,7 @@ func TestBrokerClientToServerRequest(t *testing.T) {
 		t.Fatalf("Client failed to register OnRequest handler: %v", err)
 	}
 
-	clientHandle, err := testutil.WaitForClient(t, b, cli.ID(), 5*time.Second)
+	clientHandle, err := testutil.WaitForClient(t, bs.Broker, cli.ID(), 5*time.Second)
 	if err != nil {
 		t.Fatalf("Failed to get client handle from broker: %v", err)
 	}
@@ -189,14 +189,14 @@ func TestBrokerClientToServerRequest(t *testing.T) {
 
 func TestBrokerSlowClientDisconnect(t *testing.T) {
 	// Small send buffer for the client on the broker side
-	b, _, wsURL := testutil.NewTestBroker(t, broker.WithClientSendBuffer(1), broker.WithPingInterval(-1))
+	bs := testutil.NewBrokerServer(t, broker.WithClientSendBuffer(1), broker.WithPingInterval(-1))
 
-	// No defer b.Shutdown here, we want to inspect after client is gone
+	// No defer bs.Shutdown here, we want to inspect after client is gone
 
-	cli := testutil.NewTestClient(t, wsURL, client.WithClientPingInterval(-1)) // Client doesn't need to be special
+	cli := testutil.NewTestClient(t, bs.WSURL, client.WithClientPingInterval(-1)) // Client doesn't need to be special
 
 	// Wait for client to connect
-	clientHandle, err := testutil.WaitForClient(t, b, cli.ID(), 5*time.Second)
+	clientHandle, err := testutil.WaitForClient(t, bs.Broker, cli.ID(), 5*time.Second)
 	if err != nil {
 		t.Fatalf("Client did not connect: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestBrokerSlowClientDisconnect(t *testing.T) {
 			t.Logf("Error sending message %d: %v", i, err)
 		}
 		// Also try publishing to the topic
-		err = b.Publish(context.Background(), "flood_topic", app_shared_types.BroadcastMessage{Content: fmt.Sprintf("flood publish %d", i)})
+		err = bs.Publish(context.Background(), "flood_topic", app_shared_types.BroadcastMessage{Content: fmt.Sprintf("flood publish %d", i)})
 		if err != nil {
 			t.Logf("Error publishing message %d: %v", i, err)
 		}
@@ -244,7 +244,7 @@ func TestBrokerSlowClientDisconnect(t *testing.T) {
 	// Wait for the broker to detect the slow client and disconnect it
 	var disconnected bool
 	for i := 0; i < 100; i++ { // Poll for ~5 seconds
-		_, errGet := b.GetClient(cli.ID())
+		_, errGet := bs.GetClient(cli.ID())
 		if errGet != nil { // Client no longer found
 			disconnected = true
 			break
@@ -254,7 +254,7 @@ func TestBrokerSlowClientDisconnect(t *testing.T) {
 		// Every 10 iterations, send more messages to ensure the buffer stays full
 		if i%10 == 0 {
 			for j := 0; j < 5; j++ {
-				b.Publish(context.Background(), "flood_topic", app_shared_types.BroadcastMessage{Content: fmt.Sprintf("additional flood %d-%d", i, j)})
+				bs.Publish(context.Background(), "flood_topic", app_shared_types.BroadcastMessage{Content: fmt.Sprintf("additional flood %d-%d", i, j)})
 			}
 		}
 	}
@@ -264,18 +264,18 @@ func TestBrokerSlowClientDisconnect(t *testing.T) {
 	}
 	t.Log("Broker successfully disconnected the slow client.")
 
-	b.Shutdown(context.Background()) // Now shutdown broker
+	bs.Shutdown(context.Background()) // Now shutdown broker
 }
 
 // TestBrokerClientDisconnect (from previous) - refined
 func TestClientIDAndName(t *testing.T) {
 	// Create a broker with registration handler
-	b, _, wsURL := testutil.NewTestBroker(t)
+	bs := testutil.NewBrokerServer(t)
 
 	// The broker already has a registration handler registered in New()
 
 	// Create a client with custom name
-	_ = testutil.NewTestClient(t, wsURL, client.WithClientName("test-client"))
+	_ = testutil.NewTestClient(t, bs.WSURL, client.WithClientName("test-client"))
 
 	// Wait a moment for the client to connect and register
 	time.Sleep(500 * time.Millisecond)
@@ -284,7 +284,7 @@ func TestClientIDAndName(t *testing.T) {
 	var clientHandle broker.ClientHandle
 	var found bool
 
-	b.IterateClients(func(ch broker.ClientHandle) bool {
+	bs.IterateClients(func(ch broker.ClientHandle) bool {
 		t.Logf("Found client: ID=%s, Name=%s, Type=%s, URL=%s", ch.ID(), ch.Name(), ch.ClientType(), ch.ClientURL())
 
 		// Check if this is our client by name
@@ -313,12 +313,12 @@ func TestClientIDAndName(t *testing.T) {
 }
 
 func TestBrokerClientDisconnect(t *testing.T) {
-	b, _, wsURL := testutil.NewTestBroker(t, broker.WithPingInterval(1000*time.Millisecond)) // Faster pings for test
-	t.Logf("WsURL: %s", wsURL)
+	bs := testutil.NewBrokerServer(t, broker.WithPingInterval(1000*time.Millisecond)) // Faster pings for test
+	t.Logf("WsURL: %s", bs.WSURL)
 
-	cli := testutil.NewTestClient(t, wsURL, client.WithClientPingInterval(-1)) // Client doesn't ping
+	cli := testutil.NewTestClient(t, bs.WSURL, client.WithClientPingInterval(-1)) // Client doesn't ping
 
-	clientHandle, err := testutil.WaitForClient(t, b, cli.ID(), 5*time.Second)
+	clientHandle, err := testutil.WaitForClient(t, bs.Broker, cli.ID(), 5*time.Second)
 	if err != nil {
 		t.Fatalf("Client did not connect for disconnect test: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestBrokerClientDisconnect(t *testing.T) {
 
 	// Get initial count (should be 1)
 	var initialClientCount int
-	b.IterateClients(func(ch broker.ClientHandle) bool { initialClientCount++; return true })
+	bs.IterateClients(func(ch broker.ClientHandle) bool { initialClientCount++; return true })
 	if initialClientCount != 1 {
 		t.Fatalf("Expected 1 client, got %d", initialClientCount)
 	}
@@ -336,7 +336,7 @@ func TestBrokerClientDisconnect(t *testing.T) {
 	// Wait for broker to remove client (due to readPump error or ping failure)
 	var clientRemoved bool
 	for i := 0; i < 60; i++ { // Wait up to 3s (generous for ping cycle + processing)
-		_, errGet := b.GetClient(cli.ID())
+		_, errGet := bs.GetClient(cli.ID())
 		if errGet != nil {
 			clientRemoved = true
 			break
@@ -350,10 +350,10 @@ func TestBrokerClientDisconnect(t *testing.T) {
 	t.Log("Client disconnected and broker removed it.")
 
 	var finalClientCount int
-	b.IterateClients(func(ch broker.ClientHandle) bool { finalClientCount++; return true })
+	bs.IterateClients(func(ch broker.ClientHandle) bool { finalClientCount++; return true })
 	if finalClientCount != 0 {
 		t.Errorf("Expected 0 clients after disconnect, got %d", finalClientCount)
 	}
 
-	b.Shutdown(context.Background())
+	bs.Shutdown(context.Background())
 }
