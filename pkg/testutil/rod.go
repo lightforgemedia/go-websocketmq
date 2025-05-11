@@ -274,3 +274,21 @@ func (rp *RodPage) Input(selector, text string) *RodPage {
 	rp.page.MustElement(selector).MustInput(text)
 	return rp
 }
+
+// GetCurrentURL returns the current URL of the page.
+func (rp *RodPage) GetCurrentURL() (string, error) {
+	rp.t.Helper()
+
+	result, err := rp.page.Eval("() => window.location.href")
+	if err != nil {
+		return "", err
+	}
+
+	var url string
+	err = result.Value.Unmarshal(&url)
+	if err != nil {
+		return "", err
+	}
+
+	return url, nil
+}

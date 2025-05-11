@@ -4,6 +4,8 @@ package browser_tests
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +41,24 @@ func TestBrowserClientConnection(t *testing.T) {
 	httpServer := httptest.NewServer(mux)
 	defer httpServer.Close()
 
+	// Create a handler to serve our custom JavaScript client
+	mux.HandleFunc("/custom-websocketmq.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+
+		// Read the custom JavaScript file
+		jsPath := filepath.Join("custom-websocketmq.js")
+		jsData, err := os.ReadFile(jsPath)
+		if err != nil {
+			http.Error(w, "Failed to read JavaScript file: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Write(jsData)
+	})
+
 	// Create a test HTML page handler
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -55,7 +75,7 @@ func TestBrowserClientConnection(t *testing.T) {
 						originalConsole.apply(console, arguments);
 					};
 				</script>
-				<script src="/websocketmq.js"></script>
+				<script src="/custom-websocketmq.js"></script>
 				<script>
 					// Initialize the WebSocketMQ client when the page loads
 					let client;
@@ -64,14 +84,20 @@ func TestBrowserClientConnection(t *testing.T) {
 					window.addEventListener('DOMContentLoaded', () => {
 						console.log('Page loaded, connecting with default settings');
 
-						// Create a new WebSocketMQ client with the WebSocket URL
-						// The URL is constructed based on the current page's URL
-						const wsUrl = window.location.origin.replace('http', 'ws') + '/wsmq';
-						console.log('Using WebSocket URL:', wsUrl);
+						// Create a new WebSocketMQ client with default settings
+						// The client should automatically determine the WebSocket URL
+						try {
+							console.log('Creating client with explicit WebSocket URL');
+							const wsUrl = window.location.origin.replace('http', 'ws') + '/wsmq';
+							console.log('Using WebSocket URL:', wsUrl);
 
-						client = new WebSocketMQ.Client({
-							url: wsUrl
-						});
+							client = new WebSocketMQ.Client({
+								url: wsUrl
+							});
+							console.log('Client created successfully');
+						} catch (err) {
+							console.error('Error creating client:', err);
+						}
 
 						client.onConnect(() => {
 							console.log('Connected to WebSocket server with ID:', client.getID());
@@ -85,8 +111,19 @@ func TestBrowserClientConnection(t *testing.T) {
 							document.getElementById('status').style.color = 'red';
 						});
 
-						// Connect automatically
-						client.connect();
+						// Add error handler
+						client.onError((error) => {
+							console.error('WebSocket error:', error);
+						});
+
+						// Connect automatically with error handling
+						try {
+							console.log('Calling client.connect()');
+							client.connect();
+							console.log('client.connect() called successfully');
+						} catch (err) {
+							console.error('Error connecting to WebSocket:', err);
+						}
 					});
 				</script>
 			</head>
@@ -110,8 +147,10 @@ func TestBrowserClientConnection(t *testing.T) {
 	t.Logf("WebSocket URL: %s", wsURL)
 	t.Logf("HTTP Server URL: %s", httpServer.URL)
 
+	headless := false
+
 	// Create a new Rod browser with headless mode disabled so we can see the browser
-	browser := testutil.NewRodBrowser(t, testutil.WithHeadless(false))
+	browser := testutil.NewRodBrowser(t, testutil.WithHeadless(headless))
 
 	// Navigate to the test page
 	page := browser.MustPage(httpServer.URL).WaitForLoad()
@@ -155,18 +194,32 @@ func TestBrowserClientConnection(t *testing.T) {
 
 	// Verify a client connected to the broker
 	var clientCount int
+	var clientID string
+	var clientURL string
 	bs.IterateClients(func(ch broker.ClientHandle) bool {
 		clientCount++
+		clientID = ch.ID()
+		clientURL = ch.ClientURL()
 		t.Logf("Client connected: ID=%s, Name=%s, Type=%s, URL=%s",
-			ch.ID(), ch.Name(), ch.ClientType(), ch.ClientURL())
+			clientID, ch.Name(), ch.ClientType(), clientURL)
 		return true
 	})
 	assert.Equal(t, 1, clientCount, "Should have one client connected")
+	assert.NotEmpty(t, clientURL, "Client URL should not be empty")
+
+	// Verify the URL is updated with client ID
+	// Wait a bit for the URL to be updated
+	time.Sleep(500 * time.Millisecond)
+
+	urlStr, err := page.GetCurrentURL()
+	require.NoError(t, err, "Should be able to get current URL")
+	t.Logf("Current page URL: %s", urlStr)
+	assert.Contains(t, urlStr, "client_id=", "URL should contain client_id parameter")
 
 	// Add a delay so we can see the browser window before it closes
 	// This is only useful when running with headless=false
 	if !browser.IsHeadless() {
-		t.Log("Waiting 3 seconds so you can see the browser window...")
-		time.Sleep(3 * time.Second)
+		t.Log("Waiting 30 seconds so you can see the browser window...")
+		time.Sleep(30 * time.Second)
 	}
 }

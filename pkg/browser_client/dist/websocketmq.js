@@ -1,8 +1,14 @@
 // pkg/assets/dist/websocketmq.js
 // WebSocketMQ Client - Compatible with Go WebSocketMQ protocol
+// Version: 2025-05-11-1
 
 (function(global) {
   'use strict';
+
+  // Log version to console
+  if (typeof console !== 'undefined') {
+    console.log('WebSocketMQ Client - Version: 2025-05-11-1');
+  }
 
   // Constants for Envelope Type - matching Go client
   const TYPE_REQUEST = "request";
@@ -23,22 +29,22 @@
     /**
      * Create a new WebSocketMQ client
      * @param {Object} options - Configuration options
-     * @param {string} options.url - WebSocket server URL
+     * @param {string} [options.url] - WebSocket server URL (auto-determined if not provided)
      * @param {boolean} [options.reconnect=true] - Whether to automatically reconnect
      * @param {number} [options.reconnectInterval=1000] - Initial reconnect interval in ms
      * @param {number} [options.maxReconnectInterval=30000] - Maximum reconnect interval in ms
      * @param {number} [options.reconnectMultiplier=1.5] - Multiplier for exponential backoff
      * @param {number} [options.defaultRequestTimeout=10000] - Default timeout for requests in ms
-     * @param {string} [options.clientName=""] - Client name
+     * @param {string} [options.clientName=""] - Client name (auto-generated if not provided)
      * @param {string} [options.clientType="browser"] - Client type
-     * @param {string} [options.clientURL=""] - Client URL
+     * @param {string} [options.clientURL=""] - Client URL (defaults to window.location.href)
      * @param {Object} [options.logger=console] - Logger object
      * @param {boolean} [options.updateURLWithClientID=true] - Whether to update URL with client ID parameter
      */
     constructor(options = {}) {
       // Initialize options with defaults
       this.options = Object.assign({
-        url: null,
+        url: null,  // Will be auto-determined if null
         reconnect: true,
         reconnectInterval: 1000,
         maxReconnectInterval: 30000,
@@ -51,8 +57,16 @@
         updateURLWithClientID: true // Whether to update URL with client ID
       }, options);
 
-      if (!this.options.url) {
-        throw new Error('WebSocketMQ: URL is required');
+      // Auto-determine URL if not provided
+      if (!this.options.url && typeof window !== 'undefined') {
+        // Default to /wsmq on the same host
+        this.options.url = window.location.origin.replace('http', 'ws') + '/wsmq';
+        this.options.logger.debug('WebSocketMQ: Auto-determined URL:', this.options.url);
+      } else if (!this.options.url) {
+        // In a non-browser environment, we need a URL
+        this.options.logger.warn('WebSocketMQ: URL is not provided in non-browser environment');
+        // Don't throw an error, just set a placeholder that will be caught later
+        this.options.url = 'placeholder://non-browser-environment';
       }
 
       // Initialize client state
@@ -399,6 +413,179 @@
     }
 
     /**
+     * Send client registration to the server
+     * @private
+     */
+    _sendRegistration() {
+      // Create registration payload with current URL
+      // Use snake_case field names to match Go struct tags
+      const registration = {
+        clientId: this.id,
+        clientName: this.options.clientName || `browser-${this.id.substring(0, 8)}`,
+        clientType: "browser",
+        clientUrl: typeof window !== 'undefined' ? window.location.href : this.options.clientURL
+      };
+
+      // Send registration request
+      this.request(TOPIC_CLIENT_REGISTER, registration)
+        .then(response => {
+          if (response && response.serverAssignedID) {
+            this.options.logger.info(`WebSocketMQ: Server assigned new ID: ${response.serverAssignedID}`);
+            this.id = response.serverAssignedID;
+
+            // Update URL with the new client ID
+            this._updateURLWithClientID();
+
+            // Re-subscribe to all topics
+            this._resubscribeAll();
+          }
+        })
+        .catch(err => {
+          this.options.logger.error('WebSocketMQ: Registration failed:', err);
+        });
+    }
+
+    /**
+     * Update URL with client ID
+     * @private
+     */
+    _updateURLWithClientID() {
+      if (typeof window === 'undefined' || !this.options.updateURLWithClientID) {
+        return;
+      }
+
+      // Don't modify URL if we're not in a browser context or feature is disabled
+      if (!window.history || !window.location) {
+        return;
+      }
+
+      try {
+        const url = new URL(window.location.href);
+        const params = new URLSearchParams(url.search);
+
+        // Update or add client_id parameter
+        params.set('client_id', this.id);
+        url.search = params.toString();
+
+        // Update URL without reloading the page
+        window.history.replaceState({}, '', url.toString());
+        this.options.logger.debug(`WebSocketMQ: Updated URL with client ID: ${this.id}`);
+      } catch (err) {
+        this.options.logger.error(`WebSocketMQ: Failed to update URL with client ID: ${err.message}`);
+      }
+    }
+
+    /**
+     * Extract client ID from URL if present
+     * @private
+     * @returns {string|null} - Client ID from URL or null if not found
+     */
+    _extractClientIDFromURL() {
+      if (typeof window === 'undefined') {
+        return null;
+      }
+
+      const urlParams = new URLSearchParams(window.location.search);
+      return urlParams.get('client_id');
+    }
+
+    /**
+     * Generate a unique ID
+     * @private
+     */
+    _generateID() {
+      return Date.now().toString(36) + Math.random().toString(36).substring(2, 10);
+    }
+
+    /**
+     * Schedule a reconnect attempt
+     * @private
+     */
+    _scheduleReconnect() {
+      if (this.explicitlyClosed || !this.options.reconnect || this.reconnectTimer) {
+        return;
+      }
+
+      this.reconnectAttempts++;
+      const interval = Math.min(
+        this.options.reconnectInterval * Math.pow(this.options.reconnectMultiplier, this.reconnectAttempts - 1),
+        this.options.maxReconnectInterval
+      );
+
+      this.options.logger.info(`WebSocketMQ: Scheduling reconnect attempt ${this.reconnectAttempts} in ${interval}ms.`);
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        if (!this.explicitlyClosed) this.connect();
+      }, interval);
+    }
+
+    /**
+     * Re-subscribe to all topics after reconnection
+     * @private
+     */
+    _resubscribeAll() {
+      if (this.subscriptionHandlers.size > 0) {
+        this.options.logger.info(`WebSocketMQ: Re-subscribing to ${this.subscriptionHandlers.size} topics...`);
+        for (const topic of this.subscriptionHandlers.keys()) {
+          this._sendSubscribeRequest(topic).catch(err => {
+            this.options.logger.error(`WebSocketMQ: Error re-subscribing to topic '${topic}':`, err);
+          });
+        }
+      }
+    }
+
+    /**
+     * Send a subscribe request to the server
+     * @private
+     */
+    _sendSubscribeRequest(topic) {
+      return this._sendEnvelope({
+        id: this._generateID(),
+        type: TYPE_SUBSCRIBE_REQUEST,
+        topic: topic
+      });
+    }
+
+    /**
+     * Send an unsubscribe request to the server
+     * @private
+     */
+    _sendUnsubscribeRequest(topic) {
+      return this._sendEnvelope({
+        id: this._generateID(),
+        type: TYPE_UNSUBSCRIBE_REQUEST,
+        topic: topic
+      });
+    }
+
+    /**
+     * Send an envelope to the server
+     * @private
+     */
+    _sendEnvelope(envelope) {
+      return new Promise((resolve, reject) => {
+        if (!this.isConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+          reject(new Error('WebSocketMQ: Not connected or WebSocket not open'));
+          return;
+        }
+
+        try {
+          // If payload is not null and not a string, stringify it
+          if (envelope.payload !== null && typeof envelope.payload !== 'string') {
+            envelope.payload = JSON.stringify(envelope.payload);
+          }
+
+          this.ws.send(JSON.stringify(envelope));
+          this.options.logger.debug('WebSocketMQ: Sent envelope:', envelope);
+          resolve();
+        } catch (err) {
+          this._handleError(err);
+          reject(err);
+        }
+      });
+    }
+
+    /**
      * Handle response envelope
      * @private
      */
@@ -537,178 +724,6 @@
             message: `No handler registered for topic: ${topic}`
           }
         });
-      }
-    }
-
-    /**
-     * Send client registration to the server
-     * @private
-     */
-    _sendRegistration() {
-      // Create registration payload
-      const registration = {
-        clientID: this.id,
-        clientName: this.options.clientName || `browser-${this.id.substring(0, 8)}`,
-        clientType: this.options.clientType || "browser",
-        clientURL: this.options.clientURL || window.location.href
-      };
-
-      // Send registration request
-      this.request(TOPIC_CLIENT_REGISTER, registration)
-        .then(response => {
-          if (response && response.serverAssignedID) {
-            this.options.logger.info(`WebSocketMQ: Server assigned new ID: ${response.serverAssignedID}`);
-            this.id = response.serverAssignedID;
-
-            // Update URL with the new client ID
-            this._updateURLWithClientID();
-
-            // Re-subscribe to all topics
-            this._resubscribeAll();
-          }
-        })
-        .catch(err => {
-          this.options.logger.error('WebSocketMQ: Registration failed:', err);
-        });
-    }
-
-    /**
-     * Re-subscribe to all topics after reconnection
-     * @private
-     */
-    _resubscribeAll() {
-      if (this.subscriptionHandlers.size > 0) {
-        this.options.logger.info(`WebSocketMQ: Re-subscribing to ${this.subscriptionHandlers.size} topics...`);
-        for (const topic of this.subscriptionHandlers.keys()) {
-          this._sendSubscribeRequest(topic).catch(err => {
-            this.options.logger.error(`WebSocketMQ: Error re-subscribing to topic '${topic}':`, err);
-          });
-        }
-      }
-    }
-
-    /**
-     * Send a subscribe request to the server
-     * @private
-     */
-    _sendSubscribeRequest(topic) {
-      return this._sendEnvelope({
-        id: this._generateID(),
-        type: TYPE_SUBSCRIBE_REQUEST,
-        topic: topic
-      });
-    }
-
-    /**
-     * Send an unsubscribe request to the server
-     * @private
-     */
-    _sendUnsubscribeRequest(topic) {
-      return this._sendEnvelope({
-        id: this._generateID(),
-        type: TYPE_UNSUBSCRIBE_REQUEST,
-        topic: topic
-      });
-    }
-
-    /**
-     * Send an envelope to the server
-     * @private
-     */
-    _sendEnvelope(envelope) {
-      return new Promise((resolve, reject) => {
-        if (!this.isConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
-          reject(new Error('WebSocketMQ: Not connected or WebSocket not open'));
-          return;
-        }
-
-        try {
-          // If payload is not null and not a string, stringify it
-          if (envelope.payload !== null && typeof envelope.payload !== 'string') {
-            envelope.payload = JSON.stringify(envelope.payload);
-          }
-
-          this.ws.send(JSON.stringify(envelope));
-          this.options.logger.debug('WebSocketMQ: Sent envelope:', envelope);
-          resolve();
-        } catch (err) {
-          this._handleError(err);
-          reject(err);
-        }
-      });
-    }
-
-    /**
-     * Schedule a reconnect attempt
-     * @private
-     */
-    _scheduleReconnect() {
-      if (this.explicitlyClosed || !this.options.reconnect || this.reconnectTimer) {
-        return;
-      }
-
-      this.reconnectAttempts++;
-      const interval = Math.min(
-        this.options.reconnectInterval * Math.pow(this.options.reconnectMultiplier, this.reconnectAttempts - 1),
-        this.options.maxReconnectInterval
-      );
-
-      this.options.logger.info(`WebSocketMQ: Scheduling reconnect attempt ${this.reconnectAttempts} in ${interval}ms.`);
-      this.reconnectTimer = setTimeout(() => {
-        this.reconnectTimer = null;
-        if (!this.explicitlyClosed) this.connect();
-      }, interval);
-    }
-
-    /**
-     * Generate a unique ID
-     * @private
-     */
-    _generateID() {
-      return Date.now().toString(36) + Math.random().toString(36).substring(2, 10);
-    }
-
-    /**
-     * Extract client ID from URL if present
-     * @private
-     * @returns {string|null} - Client ID from URL or null if not found
-     */
-    _extractClientIDFromURL() {
-      if (typeof window === 'undefined') {
-        return null;
-      }
-
-      const urlParams = new URLSearchParams(window.location.search);
-      return urlParams.get('client_id');
-    }
-
-    /**
-     * Update URL with client ID
-     * @private
-     */
-    _updateURLWithClientID() {
-      if (typeof window === 'undefined' || !this.options.updateURLWithClientID) {
-        return;
-      }
-
-      // Don't modify URL if we're not in a browser context or feature is disabled
-      if (!window.history || !window.location) {
-        return;
-      }
-
-      try {
-        const url = new URL(window.location.href);
-        const params = new URLSearchParams(url.search);
-
-        // Update or add client_id parameter
-        params.set('client_id', this.id);
-        url.search = params.toString();
-
-        // Update URL without reloading the page
-        window.history.replaceState({}, '', url.toString());
-        this.options.logger.debug(`WebSocketMQ: Updated URL with client ID: ${this.id}`);
-      } catch (err) {
-        this.options.logger.error(`WebSocketMQ: Failed to update URL with client ID: ${err.message}`);
       }
     }
 
