@@ -62,11 +62,13 @@ func TestBrowserClientConnection(t *testing.T) {
 
 					// Set up the client and connect automatically when the page loads
 					window.addEventListener('DOMContentLoaded', () => {
-						// Get the WebSocket URL from the data attribute
-						const wsUrl = document.getElementById('wsUrl').getAttribute('data-url');
-						console.log('Page loaded, connecting to', wsUrl);
+						console.log('Page loaded, connecting with default settings');
 
-						// Create a new WebSocketMQ client with explicit WebSocket URL
+						// Create a new WebSocketMQ client with the WebSocket URL
+						// The URL is constructed based on the current page's URL
+						const wsUrl = window.location.origin.replace('http', 'ws') + '/wsmq';
+						console.log('Using WebSocket URL:', wsUrl);
+
 						client = new WebSocketMQ.Client({
 							url: wsUrl
 						});
@@ -90,7 +92,6 @@ func TestBrowserClientConnection(t *testing.T) {
 			</head>
 			<body>
 				<h1>WebSocketMQ Browser Client Test</h1>
-				<div id="wsUrl" data-url="WEBSOCKET_URL" style="display: none;"></div>
 				<div>
 					<h2>Connection Status: <span id="status">Disconnected</span></h2>
 				</div>
@@ -98,9 +99,7 @@ func TestBrowserClientConnection(t *testing.T) {
 			</body>
 			</html>`
 
-		// Replace the WebSocket URL placeholder with the actual WebSocket URL
-		wsURL := strings.Replace(httpServer.URL, "http://", "ws://", 1) + "/wsmq"
-		html = strings.Replace(html, "WEBSOCKET_URL", wsURL, 1)
+		// No need to replace WebSocket URL as the client will determine it automatically
 		w.Write([]byte(html))
 	})
 
