@@ -16,10 +16,6 @@ import (
 
 // This test demonstrates how to use the Rod helper with a BrokerServer
 func TestRodWithBrokerServer(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping browser test in short mode")
-	}
-
 	// Create a broker server with accept options to allow any origin
 	bs := NewBrokerServer(t, broker.WithAcceptOptions(&websocket.AcceptOptions{
 		OriginPatterns: []string{"*"},
@@ -135,8 +131,9 @@ func TestRodWithBrokerServer(t *testing.T) {
 	t.Logf("WebSocket URL: %s", wsURL)
 	t.Logf("HTTP Server URL: %s", httpServer.URL)
 
+	headless := true
 	// Create a new Rod browser
-	browser := NewRodBrowser(t, WithHeadless(true))
+	browser := NewRodBrowser(t, WithHeadless(headless))
 
 	// Navigate to the test page
 	page := browser.MustPage(httpServer.URL).WaitForLoad()
@@ -179,6 +176,11 @@ func TestRodWithBrokerServer(t *testing.T) {
 		return true
 	})
 	assert.Equal(t, 1, clientCount, "Should have one client connected")
+	if !headless {
+		// Keep browser open for manual inspection
+		t.Logf("Sleeping for 30 seconds to keep browser open for manual inspection")
+		time.Sleep(30 * time.Second)
+	}
 }
 
 // NewServer creates a new HTTP test server.
