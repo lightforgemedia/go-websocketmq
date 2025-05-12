@@ -7,5 +7,5 @@ import (
 
 //go:generate go run build.go
 
-//go:embed dist/websocketmq.js dist/websocketmq.min.js
+//go:embed dist/websocketmq.js
 var clientFiles embed.FS

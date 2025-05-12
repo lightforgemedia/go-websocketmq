@@ -3,7 +3,6 @@ package browser_client
 
 import (
 	"net/http"
-	"path"
 	"strconv"
 	"strings"
 )
@@ -49,17 +48,9 @@ func (h *scriptHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// If no specific file is requested, use the default
 	if filePath == "" || filePath == strings.TrimPrefix(h.options.Path, "/") {
-		if h.options.UseMinified {
-			filePath = "websocketmq.min.js"
-		} else {
-			filePath = "websocketmq.js"
-		}
+		filePath = "websocketmq.js"
 	}
-
-	// Map the requested path to the embedded file path
-	embeddedPath := path.Join("dist", filePath)
-
-	data, err := clientFiles.ReadFile(embeddedPath)
+	data, err := GetClientScript()
 	if err != nil {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
@@ -79,10 +70,7 @@ func RegisterHandler(mux *http.ServeMux, options ClientScriptOptions) {
 }
 
 // GetClientScript returns the raw JavaScript client code
-func GetClientScript(minified bool) ([]byte, error) {
+func GetClientScript() ([]byte, error) {
 	filename := "dist/websocketmq.js"
-	if minified {
-		filename = "dist/websocketmq.min.js"
-	}
 	return clientFiles.ReadFile(filename)
 }

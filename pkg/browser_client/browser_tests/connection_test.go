@@ -4,8 +4,6 @@ package browser_tests
 import (
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -41,24 +39,6 @@ func TestBrowserClientConnection(t *testing.T) {
 	httpServer := httptest.NewServer(mux)
 	defer httpServer.Close()
 
-	// Create a handler to serve our custom JavaScript client
-	mux.HandleFunc("/custom-websocketmq.js", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/javascript")
-		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-		w.Header().Set("Pragma", "no-cache")
-		w.Header().Set("Expires", "0")
-
-		// Read the custom JavaScript file
-		jsPath := filepath.Join("custom-websocketmq.js")
-		jsData, err := os.ReadFile(jsPath)
-		if err != nil {
-			http.Error(w, "Failed to read JavaScript file: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Write(jsData)
-	})
-
 	// Create a test HTML page handler
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -75,7 +55,7 @@ func TestBrowserClientConnection(t *testing.T) {
 						originalConsole.apply(console, arguments);
 					};
 				</script>
-				<script src="/custom-websocketmq.js"></script>
+				<script src="/websocketmq.js"></script>
 				<script>
 					// Initialize the WebSocketMQ client when the page loads
 					let client;
@@ -91,9 +71,7 @@ func TestBrowserClientConnection(t *testing.T) {
 							const wsUrl = window.location.origin.replace('http', 'ws') + '/wsmq';
 							console.log('Using WebSocket URL:', wsUrl);
 
-							client = new WebSocketMQ.Client({
-								url: wsUrl
-							});
+							client = new WebSocketMQ.Client({});
 							console.log('Client created successfully');
 						} catch (err) {
 							console.error('Error creating client:', err);
