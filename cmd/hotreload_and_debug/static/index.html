@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Hot Reload Demo</title>
+    <script src="/websocketmq.js"></script>
+    <script src="/hotreload.js"></script>
+    <script>
+        // Initialize hot reload client when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            const hrClient = new HotReload.Client({
+                autoReload: true,
+                reportErrors: true
+            });
+            
+            // Update status display when connection changes
+            hrClient.client.onConnect(() => {
+                document.getElementById('status').textContent = 'Connected';
+                document.getElementById('status').style.color = 'green';
+            });
+            
+            hrClient.client.onDisconnect(() => {
+                document.getElementById('status').textContent = 'Disconnected';
+                document.getElementById('status').style.color = 'red';
+            });
+        });
+    </script>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem; }
+        .box { border: 1px solid #ccc; padding: 1rem; margin: 1rem 0; border-radius: 4px; }
+        .instructions { background: #f5f5f5; }
+    </style>
+</head>
+<body>
+    <h1>Hot Reload Demo 12</h1>
+    <div class="box">
+        <p>Status: <span id="status">Connecting...</span></p>
+    </div>
+    <div class="box instructions">
+        <h2>Instructions</h2>
+        <p>Edit this file (static/index.html) to see hot reload in action.</p>
+        <p>Try changing this text or styling and save the file.</p>
+        <p>The page should automatically reload with your changes.</p>
+    </div>
+</body>
+</html>

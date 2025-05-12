@@ -162,7 +162,7 @@
       let envelope;
       try {
         envelope = JSON.parse(event.data);
-        console.log('Received message:', envelope);
+        console.log('_onMessage:Received message:', envelope);
 
         // Process different message types
         switch (envelope.type) {
