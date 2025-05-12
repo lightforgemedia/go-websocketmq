@@ -149,7 +149,7 @@ func TestBrowserClientServerInitiatedRequest(t *testing.T) {
 	}
 
 	var responseData map[string]interface{}
-	err := clientHandle.Request(ctx, "client:get_status", requestData, &responseData, 0)
+	err := clientHandle.SendClientRequest(ctx, "client:get_status", requestData, &responseData, 0)
 	require.NoError(t, err, "Failed to make request to client")
 	t.Logf("Response from client: %v", responseData)
 

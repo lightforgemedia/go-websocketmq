@@ -85,7 +85,7 @@ func (hr *HotReload) Start() error {
 	}
 
 	// Set up broker request handler for client errors
-	err := hr.broker.OnRequest(TopicClientError, func(client broker.ClientHandle, payload map[string]interface{}) error {
+	err := hr.broker.HandleClientRequest(TopicClientError, func(client broker.ClientHandle, payload map[string]interface{}) error {
 		hr.handleClientError(client.ID(), payload)
 		return nil
 	})
@@ -93,8 +93,16 @@ func (hr *HotReload) Start() error {
 		return err
 	}
 
+	// Also set up a subscription to handle published client errors
+	// This is needed because the JavaScript client uses publish instead of request
+	hr.broker.IterateClients(func(client broker.ClientHandle) bool {
+		// Subscribe to the client error topic
+		client.Send(context.Background(), TopicClientError, nil)
+		return true
+	})
+
 	// Set up broker request handler for client ready notifications
-	err = hr.broker.OnRequest(TopicHotReloadReady, func(client broker.ClientHandle, payload map[string]interface{}) error {
+	err = hr.broker.HandleClientRequest(TopicHotReloadReady, func(client broker.ClientHandle, payload map[string]interface{}) error {
 		hr.handleClientReady(client.ID(), payload)
 		return nil
 	})
@@ -162,6 +170,11 @@ func (hr *HotReload) triggerReload() {
 // handleClientError handles client error reports
 func (hr *HotReload) handleClientError(clientID string, payload map[string]interface{}) {
 	hr.logger.Info("Received client error", "client_id", clientID, "error", payload)
+
+	// Call custom error handler if provided
+	if hr.options.ErrorHandler != nil {
+		hr.options.ErrorHandler(clientID, payload)
+	}
 
 	// Update client info
 	hr.clientsMu.Lock()

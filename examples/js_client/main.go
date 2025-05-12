@@ -37,7 +37,7 @@ func main() {
 	}
 
 	// Register a handler for the GetTime request
-	err = ergoBroker.OnRequest(shared_types.TopicGetTime,
+	err = ergoBroker.HandleClientRequest(shared_types.TopicGetTime,
 		func(client broker.ClientHandle, req shared_types.GetTimeRequest) (shared_types.GetTimeResponse, error) {
 			logger.Info("Server: Client requested time", "clientID", client.ID())
 			return shared_types.GetTimeResponse{CurrentTime: time.Now().Format(time.RFC3339)}, nil
@@ -149,7 +149,7 @@ func main() {
                 return;
             }
             appendLog('Requesting time...');
-            client.request('system:get_time', {})
+            client.sendServerRequest('system:get_time', {})
                 .then(response => {
                     appendLog('Server time: ' + response.currentTime);
                 })

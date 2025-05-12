@@ -14,10 +14,16 @@ var (
 	ErrNoFileWatcher = errors.New("no file watcher provided")
 )
 
+// ErrorHandler is a function that handles client errors
+type ErrorHandler func(clientID string, payload map[string]interface{})
+
 // Options configures the HotReload service
 type Options struct {
 	// MaxErrorsPerClient is the maximum number of errors to store per client
 	MaxErrorsPerClient int
+
+	// ErrorHandler is a custom handler for client errors
+	ErrorHandler ErrorHandler
 }
 
 // DefaultOptions returns the default options
@@ -59,5 +65,12 @@ func WithMaxErrorsPerClient(max int) Option {
 		if max > 0 {
 			hr.options.MaxErrorsPerClient = max
 		}
+	}
+}
+
+// WithErrorHandler sets a custom error handler for the hot reload service
+func WithErrorHandler(handler ErrorHandler) Option {
+	return func(hr *HotReload) {
+		hr.options.ErrorHandler = handler
 	}
 }

@@ -131,7 +131,7 @@ func New(opts ...Option) (*Broker, error) {
 	}
 
 	// Add default client registration handler
-	err := b.OnRequest(shared_types.TopicClientRegister, func(client ClientHandle, req shared_types.ClientRegistration) (shared_types.ClientRegistrationResponse, error) {
+	err := b.HandleClientRequest(shared_types.TopicClientRegister, func(client ClientHandle, req shared_types.ClientRegistration) (shared_types.ClientRegistrationResponse, error) {
 		// Get the managedClient from the ClientHandle
 		mc, ok := client.(*managedClient)
 		if !ok {
@@ -296,15 +296,15 @@ func (b *Broker) removeClient(mc *managedClient) {
 	mc.logger.Info(fmt.Sprintf("Broker: Client %s disconnected and removed.", mc.id))
 }
 
-// OnRequest registers a handler for a specific request topic.
+// HandleClientRequest registers a handler for a specific request topic from clients.
 // handlerFunc must be of type: func(ClientHandle, ReqStruct) (RespStruct, error) or func(ClientHandle, ReqStruct) error
-func (b *Broker) OnRequest(topic string, handlerFunc interface{}) error {
+func (b *Broker) HandleClientRequest(topic string, handlerFunc interface{}) error {
 	hw, err := ergosockets.NewHandlerWrapper(handlerFunc)
 	if err != nil {
-		return fmt.Errorf("broker OnRequest topic '%s': %w", topic, err)
+		return fmt.Errorf("broker HandleClientRequest topic '%s': %w", topic, err)
 	}
 	if hw.HandlerFunc.Type().NumIn() != 2 {
-		return fmt.Errorf("broker OnRequest topic '%s': handler must have 2 input arguments (ClientHandle, RequestType), got %d", topic, hw.HandlerFunc.Type().NumIn())
+		return fmt.Errorf("broker HandleClientRequest topic '%s': handler must have 2 input arguments (ClientHandle, RequestType), got %d", topic, hw.HandlerFunc.Type().NumIn())
 	}
 
 	b.requestHandlersMu.Lock()
@@ -417,6 +417,12 @@ func (b *Broker) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+// OnRequest is a backward compatibility method that calls HandleClientRequest.
+// Deprecated: Use HandleClientRequest instead.
+func (b *Broker) OnRequest(topic string, handlerFunc interface{}) error {
+	return b.HandleClientRequest(topic, handlerFunc)
+}
+
 // Context returns the broker's main context, which is cancelled on Shutdown.
 func (b *Broker) Context() context.Context {
 	return b.mainCtx
@@ -456,7 +462,13 @@ func (mc *managedClient) Name() string             { return mc.name }
 func (mc *managedClient) ClientType() string       { return mc.clientType }
 func (mc *managedClient) ClientURL() string        { return mc.clientURL }
 func (mc *managedClient) Context() context.Context { return mc.ctx }
+
+// Request is a backward compatibility method that calls SendClientRequest.
+// Deprecated: Use SendClientRequest instead.
 func (mc *managedClient) Request(ctx context.Context, topic string, requestData interface{}, responsePayloadPtr interface{}, timeout time.Duration) error {
+	return mc.SendClientRequest(ctx, topic, requestData, responsePayloadPtr, timeout)
+}
+func (mc *managedClient) SendClientRequest(ctx context.Context, topic string, requestData interface{}, responsePayloadPtr interface{}, timeout time.Duration) error {
 	select {
 	case <-mc.ctx.Done():
 		return fmt.Errorf("client %s disconnected: %w", mc.id, mc.ctx.Err())

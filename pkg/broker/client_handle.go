@@ -16,10 +16,10 @@ type ClientHandle interface {
 	ClientURL() string        // URL of the client (for browser connections).
 	Context() context.Context // Context associated with this client's connection.
 
-	// Request sends a request to this specific client and waits for a response.
+	// SendClientRequest sends a request to this specific client and waits for a response.
 	// The responsePayloadPtr argument should be a pointer to a struct where the response will be unmarshalled.
 	// Timeout <= 0 means use broker's default serverRequestTimeout.
-	Request(ctx context.Context, topic string, requestData interface{}, responsePayloadPtr interface{}, timeout time.Duration) error
+	SendClientRequest(ctx context.Context, topic string, requestData interface{}, responsePayloadPtr interface{}, timeout time.Duration) error
 
 	// Send publishes a message directly to this client on a specific topic without expecting a direct response.
 	Send(ctx context.Context, topic string, payloadData interface{}) error

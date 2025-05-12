@@ -264,7 +264,7 @@
       console.log('Sending registration:', registration);
 
       // Send registration request
-      this.request(TOPIC_CLIENT_REGISTER, registration)
+      this.sendServerRequest(TOPIC_CLIENT_REGISTER, registration)
         .then(response => {
           if (response && response.serverAssignedId) {
             console.log('Server assigned new ID:', response.serverAssignedId);
@@ -279,7 +279,7 @@
         });
     }
 
-    request(topic, payload = null, timeoutMs = null) {
+    sendServerRequest(topic, payload = null, timeoutMs = null) {
       if (!this.isConnected) {
         console.warn('Not connected. Cannot send request.');
         return Promise.reject(new Error('Not connected'));
@@ -436,7 +436,7 @@
     }
 
     // Register a handler for server-initiated requests
-    onRequest(topic, handler) {
+    handleServerRequest(topic, handler) {
       if (typeof handler !== 'function') {
         throw new Error('Handler must be a function');
       }
@@ -474,6 +474,20 @@
       this.onErrorCallbacks.forEach(cb => {
         try { cb(error); } catch(e) { console.error("Error in onError callback", e); }
       });
+    }
+
+    // Backward compatibility methods
+
+    // Deprecated: Use sendServerRequest instead
+    request(topic, payload = null, timeoutMs = null) {
+      console.warn('request() is deprecated, use sendServerRequest() instead');
+      return this.sendServerRequest(topic, payload, timeoutMs);
+    }
+
+    // Deprecated: Use handleServerRequest instead
+    onRequest(topic, handler) {
+      console.warn('onRequest() is deprecated, use handleServerRequest() instead');
+      return this.handleServerRequest(topic, handler);
     }
   }
 

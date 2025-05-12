@@ -65,7 +65,7 @@ func TestBrowserConnection(t *testing.T, bs *testutil.BrokerServer, httpServer *
 	// Check if we have a log message indicating successful connection
 	connectionSuccess := false
 	for _, log := range logs {
-		if strings.Contains(log, "Connected to WebSocket server with ID:") {
+		if strings.Contains(log, "Connected to WebSocket server") {
 			connectionSuccess = true
 			break
 		}

@@ -119,8 +119,8 @@ func TestBrokerClientToServerRequest(t *testing.T) {
 	ctxReq, cancelReq := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancelReq()
 
-	// ClientHandle.Request takes responsePayloadPtr interface{}
-	err = clientHandle.Request(ctxReq, app_shared_types.TopicClientGetStatus,
+	// ClientHandle.SendClientRequest takes responsePayloadPtr interface{}
+	err = clientHandle.SendClientRequest(ctxReq, app_shared_types.TopicClientGetStatus,
 		app_shared_types.ClientStatusQuery{QueryDetailLevel: "full-refined"}, &responsePayload, 0)
 
 	if err != nil {
@@ -129,9 +129,9 @@ func TestBrokerClientToServerRequest(t *testing.T) {
 
 	select {
 	case <-clientHandlerInvoked:
-		t.Log("Client OnRequest handler was invoked.")
+		t.Log("Client HandleServerRequest handler was invoked.")
 	case <-time.After(1 * time.Second):
-		t.Fatal("Client OnRequest handler was not invoked in time.")
+		t.Fatal("Client HandleServerRequest handler was not invoked in time.")
 	}
 
 	if responsePayload.Status != "client-test-ok-refined" || responsePayload.Uptime != expectedClientUptime {

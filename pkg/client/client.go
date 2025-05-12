@@ -664,7 +664,7 @@ func (c *Client) invokeClientRequestHandler(hw *ergosockets.HandlerWrapper, reqE
 	}
 
 	if errResult != nil {
-		c.config.logger.Info(fmt.Sprintf("Client %s: OnRequest handler for server topic '%s' returned error: %v", c.id, reqEnv.Topic, errResult))
+		c.config.logger.Info(fmt.Sprintf("Client %s: HandleServerRequest handler for server topic '%s' returned error: %v", c.id, reqEnv.Topic, errResult))
 		errResp, _ := ergosockets.NewEnvelope(reqEnv.ID, ergosockets.TypeError, reqEnv.Topic, nil, &ergosockets.ErrorPayload{Code: http.StatusInternalServerError, Message: errResult.Error()})
 		c.trySend(errResp)
 		return
@@ -791,10 +791,10 @@ func (c *Client) pingLoop() {
 	}
 }
 
-// Request sends a request to the server and waits for a response of type T.
+// SendServerRequest sends a request to the server and waits for a response of type T.
 // The first optional payload argument (reqData) is the request data.
 // If no reqData is provided, a null payload is sent.
-func (c *Client) Request(ctx context.Context, topic string, reqData ...interface{}) (*json.RawMessage, *ergosockets.ErrorPayload, error) {
+func (c *Client) SendServerRequest(ctx context.Context, topic string, reqData ...interface{}) (*json.RawMessage, *ergosockets.ErrorPayload, error) {
 	c.closedMu.Lock()
 	if c.isClosed {
 		c.closedMu.Unlock()
@@ -975,10 +975,10 @@ func (c *Client) sendUnsubscribeRequest(topic string) error {
 	}
 }
 
-// OnRequest registers a handler for requests initiated by the server on a given topic.
+// HandleServerRequest registers a handler for requests initiated by the server on a given topic.
 // handlerFunc must be of type: func(ReqStruct) (RespStruct, error) or func(ReqStruct) error
 // or func(*ReqStruct) (*RespStruct, error) etc.
-func (c *Client) OnRequest(topic string, handlerFunc interface{}) error {
+func (c *Client) HandleServerRequest(topic string, handlerFunc interface{}) error {
 	c.closedMu.Lock()
 	if c.isClosed {
 		c.closedMu.Unlock()
@@ -988,11 +988,11 @@ func (c *Client) OnRequest(topic string, handlerFunc interface{}) error {
 
 	hw, err := ergosockets.NewHandlerWrapper(handlerFunc)
 	if err != nil {
-		return fmt.Errorf("client OnRequest topic '%s': %w", topic, err)
+		return fmt.Errorf("client HandleServerRequest topic '%s': %w", topic, err)
 	}
-	// Validate client OnRequest signature (1 in, 1 or 2 out with last as error)
+	// Validate client HandleServerRequest signature (1 in, 1 or 2 out with last as error)
 	if hw.HandlerFunc.Type().NumIn() != 1 {
-		return fmt.Errorf("client OnRequest topic '%s': handler must have 1 input argument (RequestType), got %d", topic, hw.HandlerFunc.Type().NumIn())
+		return fmt.Errorf("client HandleServerRequest topic '%s': handler must have 1 input argument (RequestType), got %d", topic, hw.HandlerFunc.Type().NumIn())
 	}
 
 	c.requestHandlersMu.Lock()
@@ -1003,6 +1003,18 @@ func (c *Client) OnRequest(topic string, handlerFunc interface{}) error {
 	c.requestHandlers[topic] = hw
 	c.config.logger.Info(fmt.Sprintf("Client %s: Registered handler for server requests on topic '%s'", c.id, topic))
 	return nil
+}
+
+// Request is a backward compatibility method that calls SendServerRequest.
+// Deprecated: Use SendServerRequest instead.
+func (c *Client) Request(ctx context.Context, topic string, reqData ...interface{}) (*json.RawMessage, *ergosockets.ErrorPayload, error) {
+	return c.SendServerRequest(ctx, topic, reqData...)
+}
+
+// OnRequest is a backward compatibility method that calls HandleServerRequest.
+// Deprecated: Use HandleServerRequest instead.
+func (c *Client) OnRequest(topic string, handlerFunc interface{}) error {
+	return c.HandleServerRequest(topic, handlerFunc)
 }
 
 // ID returns the unique ID of this client instance.
@@ -1078,7 +1090,7 @@ func (c *Client) Close() error {
 // - If one reqData: uses it as the payload.
 // - More than one reqData is a usage error (takes the first).
 func GenericRequest[T any](cli *Client, ctx context.Context, topic string, reqData ...interface{}) (*T, error) {
-	rawPayload, serverErrPayload, err := cli.Request(ctx, topic, reqData...)
+	rawPayload, serverErrPayload, err := cli.SendServerRequest(ctx, topic, reqData...)
 	if err != nil {
 		if serverErrPayload != nil {
 			return nil, fmt.Errorf("server error (code %d): %s (underlying client/network error: %w)", serverErrPayload.Code, serverErrPayload.Message, err)
