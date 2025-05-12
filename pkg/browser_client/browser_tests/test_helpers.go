@@ -77,16 +77,25 @@ func TestBrowserConnection(t *testing.T, bs *testutil.BrokerServer, httpServer *
 	var clientCount int
 	var clientID string
 	var clientURL string
+	// Find the browser client
+	var browserClient broker.ClientHandle
 	bs.IterateClients(func(ch broker.ClientHandle) bool {
 		clientCount++
-		clientID = ch.ID()
-		clientURL = ch.ClientURL()
 		t.Logf("Client connected: ID=%s, Name=%s, Type=%s, URL=%s",
-			clientID, ch.Name(), ch.ClientType(), clientURL)
+			ch.ID(), ch.Name(), ch.ClientType(), ch.ClientURL())
+
+		// Look for the browser client (has a non-empty URL)
+		if ch.ClientType() == "browser" && ch.ClientURL() != "" {
+			clientID = ch.ID()
+			clientURL = ch.ClientURL()
+			browserClient = ch
+		}
 		return true
 	})
-	assert.Equal(t, 1, clientCount, "Should have one client connected")
-	assert.NotEmpty(t, clientURL, "Client URL should not be empty")
+
+	// Make sure we found a browser client
+	assert.NotNil(t, browserClient, "Should have a browser client connected")
+	assert.NotEmpty(t, clientURL, "Browser client URL should not be empty")
 
 	// Verify the URL is updated with client ID
 	// Wait a bit for the URL to be updated

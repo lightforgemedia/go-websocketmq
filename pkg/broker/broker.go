@@ -624,6 +624,8 @@ func (mc *managedClient) readPump() {
 				mc.logger.Info(fmt.Sprintf("Broker: Received unsolicited server-targeted response/error with ID %s from client %s", env.ID, mc.id))
 			}
 			mc.pendingServerRequestsMu.Unlock()
+		case ergosockets.TypePublish:
+			mc.handleClientPublish(&env)
 		case ergosockets.TypeSubscribeRequest:
 			mc.handleSubscribeRequest(&env)
 		case ergosockets.TypeUnsubscribeRequest:
@@ -769,6 +771,22 @@ func (mc *managedClient) handleUnsubscribeRequest(env *ergosockets.Envelope) {
 	// Optionally send ack for unsubscribe
 	ackEnv, _ := ergosockets.NewEnvelope(env.ID, ergosockets.TypeSubscriptionAck, topic, map[string]string{"status": "unsubscribed", "topic": topic}, nil) // Re-use ack type
 	mc.trySend(ackEnv)
+}
+
+func (mc *managedClient) handleClientPublish(env *ergosockets.Envelope) {
+	topic := env.Topic
+	if topic == "" {
+		mc.logger.Info(fmt.Sprintf("Broker: Client %s sent publish with empty topic", mc.id))
+		return
+	}
+
+	// Forward the publish to all subscribers
+	err := mc.broker.Publish(mc.ctx, topic, env.Payload)
+	if err != nil {
+		mc.logger.Info(fmt.Sprintf("Broker: Failed to publish message from client %s to topic '%s': %v", mc.id, topic, err))
+	} else {
+		mc.logger.Info(fmt.Sprintf("Broker: Client %s published message to topic '%s'", mc.id, topic))
+	}
 }
 
 // trySend attempts to send an envelope to the client's send channel without blocking indefinitely.

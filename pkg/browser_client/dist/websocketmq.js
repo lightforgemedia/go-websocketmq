@@ -240,6 +240,10 @@
             console.error('Received error:', envelope.payload);
             break;
 
+          case TYPE_SUBSCRIPTION_ACK:
+            console.log('Received subscription acknowledgement for topic:', envelope.topic);
+            break;
+
           default:
             console.warn('Unknown message type:', envelope.type);
         }
@@ -445,6 +449,24 @@
         this.requestHandlers.delete(topic);
         console.log('Removed handler for topic:', topic);
       };
+    }
+
+    // Publish a message to a topic
+    publish(topic, payload = null) {
+      if (!this.isConnected) {
+        console.warn('Not connected. Cannot publish message.');
+        return Promise.reject(new Error('Not connected'));
+      }
+
+      console.log('Publishing message to topic:', topic, payload);
+
+      // Send the publish envelope
+      return this._sendEnvelope({
+        id: this._generateID(),
+        type: TYPE_PUBLISH,
+        topic: topic,
+        payload: payload
+      });
     }
 
     _handleError(error) {
