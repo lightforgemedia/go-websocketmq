@@ -163,9 +163,88 @@
       try {
         envelope = JSON.parse(event.data);
         console.log('Received message:', envelope);
+
+        // Process different message types
+        switch (envelope.type) {
+          case TYPE_RESPONSE:
+            // Response handling is now done in the request method
+            break;
+
+          case TYPE_PUBLISH:
+            // Handle published messages
+            if (this.subscriptionHandlers.has(envelope.topic)) {
+              const handler = this.subscriptionHandlers.get(envelope.topic);
+              try {
+                handler(envelope.payload);
+              } catch (err) {
+                console.error('Error in subscription handler:', err);
+              }
+            }
+            break;
+
+          case TYPE_REQUEST:
+            // Handle server-initiated requests
+            if (this.requestHandlers.has(envelope.topic)) {
+              const handler = this.requestHandlers.get(envelope.topic);
+              try {
+                const result = handler(envelope.payload);
+
+                // If the result is a Promise, wait for it to resolve
+                if (result instanceof Promise) {
+                  result.then(response => {
+                    this._sendEnvelope({
+                      id: envelope.id,
+                      type: TYPE_RESPONSE,
+                      topic: envelope.topic,
+                      payload: response
+                    }).catch(err => console.error('Error sending response:', err));
+                  }).catch(err => {
+                    console.error('Error in request handler:', err);
+                    this._sendEnvelope({
+                      id: envelope.id,
+                      type: TYPE_ERROR,
+                      topic: envelope.topic,
+                      payload: { error: err.message }
+                    }).catch(e => console.error('Error sending error response:', e));
+                  });
+                } else {
+                  // Send the response immediately
+                  this._sendEnvelope({
+                    id: envelope.id,
+                    type: TYPE_RESPONSE,
+                    topic: envelope.topic,
+                    payload: result
+                  }).catch(err => console.error('Error sending response:', err));
+                }
+              } catch (err) {
+                console.error('Error in request handler:', err);
+                this._sendEnvelope({
+                  id: envelope.id,
+                  type: TYPE_ERROR,
+                  topic: envelope.topic,
+                  payload: { error: err.message }
+                }).catch(e => console.error('Error sending error response:', e));
+              }
+            } else {
+              console.warn('No handler for request topic:', envelope.topic);
+              this._sendEnvelope({
+                id: envelope.id,
+                type: TYPE_ERROR,
+                topic: envelope.topic,
+                payload: { error: 'No handler for topic: ' + envelope.topic }
+              }).catch(err => console.error('Error sending error response:', err));
+            }
+            break;
+
+          case TYPE_ERROR:
+            console.error('Received error:', envelope.payload);
+            break;
+
+          default:
+            console.warn('Unknown message type:', envelope.type);
+        }
       } catch (err) {
-        this._handleError(new Error("Failed to parse message: " + err.message));
-        return;
+        this._handleError(new Error("Failed to process message: " + err.message));
       }
     }
 
@@ -205,16 +284,48 @@
       return new Promise((resolve, reject) => {
         const requestId = this._generateID();
 
+        // Set up a one-time message handler to catch the response
+        const messageHandler = (event) => {
+          try {
+            const envelope = JSON.parse(event.data);
+
+            // Check if this is a response to our request
+            if (envelope.type === TYPE_RESPONSE && envelope.id === requestId) {
+              // Remove the event listener once we get the response
+              this.ws.removeEventListener('message', messageHandler);
+
+              // Resolve with the actual payload from the response
+              console.log('Received response for request', requestId, ':', envelope.payload);
+              resolve(envelope.payload);
+            }
+          } catch (err) {
+            console.error('Error handling response:', err);
+          }
+        };
+
+        // Add the message handler
+        this.ws.addEventListener('message', messageHandler);
+
         // Send the request envelope
         this._sendEnvelope({
           id: requestId,
           type: TYPE_REQUEST,
           topic: topic,
           payload: payload
-        }).then(() => {
-          // For testing, just resolve immediately
-          resolve({ serverAssignedId: "server-" + this.id });
-        }).catch(reject);
+        }).catch(err => {
+          // Remove the message handler if sending fails
+          this.ws.removeEventListener('message', messageHandler);
+          reject(err);
+        });
+
+        // Set up timeout if specified
+        if (timeoutMs) {
+          setTimeout(() => {
+            // Check if the handler is still registered (response not received yet)
+            this.ws.removeEventListener('message', messageHandler);
+            reject(new Error('Request timed out'));
+          }, timeoutMs);
+        }
       });
     }
 
@@ -274,6 +385,66 @@
 
     _generateID() {
       return Date.now().toString(36) + Math.random().toString(36).substring(2, 10);
+    }
+
+    // Subscribe to a topic
+    subscribe(topic, handler) {
+      if (typeof handler !== 'function') {
+        throw new Error('Handler must be a function');
+      }
+
+      this.subscriptionHandlers.set(topic, handler);
+      console.log('Subscribed to topic:', topic);
+
+      // Send subscription request to the server
+      if (this.isConnected) {
+        this._sendEnvelope({
+          id: this._generateID(),
+          type: TYPE_SUBSCRIBE_REQUEST,
+          topic: topic,
+          payload: null
+        }).catch(err => console.error('Error sending subscription request:', err));
+      }
+
+      // Return unsubscribe function
+      return () => this.unsubscribe(topic);
+    }
+
+    // Unsubscribe from a topic
+    unsubscribe(topic) {
+      if (!this.subscriptionHandlers.has(topic)) {
+        console.warn('Not subscribed to topic:', topic);
+        return;
+      }
+
+      this.subscriptionHandlers.delete(topic);
+      console.log('Unsubscribed from topic:', topic);
+
+      // Send unsubscription request to the server
+      if (this.isConnected) {
+        this._sendEnvelope({
+          id: this._generateID(),
+          type: TYPE_UNSUBSCRIBE_REQUEST,
+          topic: topic,
+          payload: null
+        }).catch(err => console.error('Error sending unsubscription request:', err));
+      }
+    }
+
+    // Register a handler for server-initiated requests
+    onRequest(topic, handler) {
+      if (typeof handler !== 'function') {
+        throw new Error('Handler must be a function');
+      }
+
+      this.requestHandlers.set(topic, handler);
+      console.log('Registered handler for topic:', topic);
+
+      // Return function to remove the handler
+      return () => {
+        this.requestHandlers.delete(topic);
+        console.log('Removed handler for topic:', topic);
+      };
     }
 
     _handleError(error) {

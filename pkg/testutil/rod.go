@@ -292,3 +292,10 @@ func (rp *RodPage) GetCurrentURL() (string, error) {
 
 	return url, nil
 }
+
+// EvalJS evaluates JavaScript code on the page.
+func (rp *RodPage) EvalJS(js string) error {
+	rp.t.Helper()
+	_, err := rp.page.Eval(js)
+	return err
+}
