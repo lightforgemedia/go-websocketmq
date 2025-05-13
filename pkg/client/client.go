@@ -1023,18 +1023,6 @@ func (c *Client) HandleServerRequest(topic string, handlerFunc interface{}) erro
 	return nil
 }
 
-// Request is a backward compatibility method that calls SendServerRequest.
-// Deprecated: Use SendServerRequest instead.
-func (c *Client) Request(ctx context.Context, topic string, reqData ...interface{}) (*json.RawMessage, *ergosockets.ErrorPayload, error) {
-	return c.SendServerRequest(ctx, topic, reqData...)
-}
-
-// OnRequest is a backward compatibility method that calls HandleServerRequest.
-// Deprecated: Use HandleServerRequest instead.
-func (c *Client) OnRequest(topic string, handlerFunc interface{}) error {
-	return c.HandleServerRequest(topic, handlerFunc)
-}
-
 // ID returns the unique ID of this client instance.
 func (c *Client) ID() string {
 	return c.id

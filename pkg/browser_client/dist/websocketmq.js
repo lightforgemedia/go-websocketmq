@@ -475,20 +475,6 @@
         try { cb(error); } catch(e) { console.error("Error in onError callback", e); }
       });
     }
-
-    // Backward compatibility methods
-
-    // Deprecated: Use sendServerRequest instead
-    request(topic, payload = null, timeoutMs = null) {
-      console.warn('request() is deprecated, use sendServerRequest() instead');
-      return this.sendServerRequest(topic, payload, timeoutMs);
-    }
-
-    // Deprecated: Use handleServerRequest instead
-    onRequest(topic, handler) {
-      console.warn('onRequest() is deprecated, use handleServerRequest() instead');
-      return this.handleServerRequest(topic, handler);
-    }
   }
 
   // Export the WebSocketMQClient class

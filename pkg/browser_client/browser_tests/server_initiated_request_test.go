@@ -58,7 +58,7 @@ func TestBrowserClientServerInitiatedRequest(t *testing.T) {
 							// Make sure client is connected
 							if (window.client && window.client.isConnected) {
 								// Register the handler
-								window.client.onRequest('client:get_status', (payload) => {
+								window.client.handleServerRequest('client:get_status', (payload) => {
 									console.log('Received request on topic client:get_status:', payload);
 
 									// Update UI with request details

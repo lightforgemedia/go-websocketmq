@@ -17,7 +17,7 @@ import (
 func TestBrokerRequestResponse(t *testing.T) {
 	bs := testutil.NewBrokerServer(t)
 
-	err := bs.OnRequest(app_shared_types.TopicGetTime,
+	err := bs.HandleClientRequest(app_shared_types.TopicGetTime,
 		func(ch broker.ClientHandle, req app_shared_types.GetTimeRequest) (app_shared_types.GetTimeResponse, error) {
 			t.Logf("TestBroker: Server handler for %s invoked by client %s", app_shared_types.TopicGetTime, ch.ID())
 			return app_shared_types.GetTimeResponse{CurrentTime: "test-time-refined"}, nil
@@ -100,15 +100,15 @@ func TestBrokerClientToServerRequest(t *testing.T) {
 
 	clientHandlerInvoked := make(chan bool, 1)
 	expectedClientUptime := "test-uptime-refined"
-	err := cli.OnRequest(app_shared_types.TopicClientGetStatus,
+	err := cli.HandleServerRequest(app_shared_types.TopicClientGetStatus,
 		func(req app_shared_types.ClientStatusQuery) (app_shared_types.ClientStatusReport, error) {
-			t.Logf("TestBroker: Client OnRequest handler for %s invoked with query: %s", app_shared_types.TopicClientGetStatus, req.QueryDetailLevel)
+			t.Logf("TestBroker: Client HandleServerRequest handler for %s invoked with query: %s", app_shared_types.TopicClientGetStatus, req.QueryDetailLevel)
 			clientHandlerInvoked <- true
 			return app_shared_types.ClientStatusReport{ClientID: cli.ID(), Status: "client-test-ok-refined", Uptime: expectedClientUptime}, nil
 		},
 	)
 	if err != nil {
-		t.Fatalf("Client failed to register OnRequest handler: %v", err)
+		t.Fatalf("Client failed to register HandleServerRequest handler: %v", err)
 	}
 
 	clientHandle, err := testutil.WaitForClient(t, bs.Broker, cli.ID(), 5*time.Second)

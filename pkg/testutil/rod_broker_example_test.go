@@ -22,7 +22,7 @@ func TestRodWithBrokerServer(t *testing.T) {
 	}))
 
 	// Register a handler for the get_time request
-	err := bs.OnRequest(app_shared_types.TopicGetTime,
+	err := bs.HandleClientRequest(app_shared_types.TopicGetTime,
 		func(ch broker.ClientHandle, req app_shared_types.GetTimeRequest) (app_shared_types.GetTimeResponse, error) {
 			t.Logf("Server received get_time request from client %s", ch.ID())
 			return app_shared_types.GetTimeResponse{CurrentTime: time.Now().Format(time.RFC3339)}, nil

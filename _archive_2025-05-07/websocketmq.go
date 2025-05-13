@@ -50,7 +50,7 @@
 //	        });
 //
 //	        // Make a request
-//	        client.request("server.echo", { text: "Echo this" }, 5000)
+//	        client.sendServerRequest("server.echo", { text: "Echo this" }, 5000)
 //	            .then(response => console.log("Response:", response))
 //	            .catch(err => console.error("Request failed:", err));
 //	    });
@@ -289,9 +289,9 @@ func NewPubSubBroker(logger Logger, opts BrokerOptions) Broker {
 //	handlerOpts := websocketmq.DefaultHandlerOptions()
 //	handlerOpts.MaxMessageSize = 512 * 1024  // Limit message size to 512KB
 //	handlerOpts.AllowedOrigins = []string{"https://example.com"}  // Restrict to specific origin
-//	
+//
 //	handler := websocketmq.NewHandler(broker, logger, handlerOpts)
-//	
+//
 //	// Mount in an HTTP server
 //	mux := http.NewServeMux()
 //	mux.Handle("/ws", handler)
@@ -311,7 +311,7 @@ func NewHandler(b Broker, logger Logger, opts HandlerOptions) *Handler {
 //	// Mount the script handler at the /wsmq/ path
 //	mux := http.NewServeMux()
 //	mux.Handle("/wsmq/", http.StripPrefix("/wsmq/", websocketmq.ScriptHandler()))
-//	
+//
 //	// The client can then include the script with:
 //	// <script src="/wsmq/websocketmq.min.js"></script>
 func ScriptHandler() http.Handler {
@@ -336,7 +336,7 @@ func ScriptHandler() http.Handler {
 //	    log.Printf("Failed to get client script: %v", err)
 //	    return
 //	}
-//	
+//
 //	// Use the script bytes as needed
 //	ioutil.WriteFile("public/js/websocketmq.min.js", script, 0644)
 func GetClientScript(minified bool) ([]byte, error) {
@@ -365,7 +365,7 @@ func GetClientScript(minified bool) ([]byte, error) {
 //	    log.Printf("Failed to start watcher: %v", err)
 //	    return
 //	}
-//	
+//
 //	// Stop the watcher when shutting down
 //	defer stopWatcher()
 func StartDevWatcher(ctx context.Context, b Broker, logger Logger, opts WatchOptions) (func() error, error) {

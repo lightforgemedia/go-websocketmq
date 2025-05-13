@@ -505,12 +505,6 @@ func (b *Broker) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// OnRequest is a backward compatibility method that calls HandleClientRequest.
-// Deprecated: Use HandleClientRequest instead.
-func (b *Broker) OnRequest(topic string, handlerFunc interface{}) error {
-	return b.HandleClientRequest(topic, handlerFunc)
-}
-
 // Context returns the broker's main context, which is cancelled on Shutdown.
 func (b *Broker) Context() context.Context {
 	return b.mainCtx
@@ -551,11 +545,6 @@ func (mc *managedClient) ClientType() string       { return mc.clientType }
 func (mc *managedClient) ClientURL() string        { return mc.clientURL }
 func (mc *managedClient) Context() context.Context { return mc.ctx }
 
-// Request is a backward compatibility method that calls SendClientRequest.
-// Deprecated: Use SendClientRequest instead.
-func (mc *managedClient) Request(ctx context.Context, topic string, requestData interface{}, responsePayloadPtr interface{}, timeout time.Duration) error {
-	return mc.SendClientRequest(ctx, topic, requestData, responsePayloadPtr, timeout)
-}
 func (mc *managedClient) SendClientRequest(ctx context.Context, topic string, requestData interface{}, responsePayloadPtr interface{}, timeout time.Duration) error {
 	select {
 	case <-mc.ctx.Done():

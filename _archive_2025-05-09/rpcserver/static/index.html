@@ -213,7 +213,7 @@
         document.getElementById('client-ping-server').addEventListener('click', () => {
             const pingPayload = { data: "ping from client", time: new Date().toISOString() };
             addMessageToLog(messagesContainer, 'request', 'Client Request: server.ping', pingPayload);
-            client.request("server.ping", pingPayload, 3000)
+            client.sendServerRequest("server.ping", pingPayload, 3000)
                 .then(response => {
                     addMessageToLog(messagesContainer, 'response', 'Server Response (to server.ping)', response);
                     document.getElementById('client-ping-response').textContent = `Server Pong: ${JSON.stringify(response)}`;

@@ -192,7 +192,7 @@
             if (topic && message) {
                 addMessage('request', `Request to ${topic}:`, { text: message });
                 
-                client.request(topic, { text: message, timestamp: new Date().toISOString() }, 5000)
+                client.sendServerRequest(topic, { text: message, timestamp: new Date().toISOString() }, 5000)
                     .then(response => {
                         addMessage('response', `Response from ${topic}:`, response);
                     })

@@ -54,7 +54,7 @@ func main() {
 	}
 
 	// 2. Define handlers
-	err = ergoBroker.OnRequest(app_shared_types.TopicGetTime,
+	err = ergoBroker.HandleClientRequest(app_shared_types.TopicGetTime,
 		func(client broker.ClientHandle, req app_shared_types.GetTimeRequest) (app_shared_types.GetTimeResponse, error) {
 			logger.Info("Server: Client requested time", "clientID", client.ID())
 			return app_shared_types.GetTimeResponse{CurrentTime: time.Now().Format(time.RFC3339)}, nil
@@ -65,7 +65,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	err = ergoBroker.OnRequest(app_shared_types.TopicUserDetails,
+	err = ergoBroker.HandleClientRequest(app_shared_types.TopicUserDetails,
 		func(client broker.ClientHandle, req app_shared_types.GetUserDetailsRequest) (app_shared_types.UserDetailsResponse, error) {
 			logger.Info("Server: Client requested user details", "clientID", client.ID(), "requestedUserID", req.UserID)
 			if req.UserID == "user123" {
@@ -79,7 +79,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	err = ergoBroker.OnRequest(app_shared_types.TopicErrorTest,
+	err = ergoBroker.HandleClientRequest(app_shared_types.TopicErrorTest,
 		func(client broker.ClientHandle, req app_shared_types.ErrorTestRequest) (app_shared_types.ErrorTestResponse, error) {
 			logger.Info("Server: Client requested error test", "clientID", client.ID(), "shouldError", req.ShouldError)
 			if req.ShouldError {
@@ -93,7 +93,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	err = ergoBroker.OnRequest(app_shared_types.TopicSlowServerRequest,
+	err = ergoBroker.HandleClientRequest(app_shared_types.TopicSlowServerRequest,
 		func(client broker.ClientHandle, req app_shared_types.SlowServerRequest) (app_shared_types.SlowServerResponse, error) {
 			delay := time.Duration(req.DelayMilliseconds) * time.Millisecond
 			logger.Info("Server: Client requested slow response", "clientID", client.ID(), "delay", delay)

@@ -59,7 +59,7 @@ func TestHotReload(t *testing.T) {
 		reloadCh <- struct{}{}
 	})
 
-	err = b.OnRequest(TopicHotReload, func(client broker.ClientHandle, payload interface{}) error {
+	err = b.HandleClientRequest(TopicHotReload, func(client broker.ClientHandle, payload interface{}) error {
 		t.Logf("Reload request received for client: %s", client.ID())
 		if client.ID() == mockClientID {
 			reloadCh <- struct{}{}

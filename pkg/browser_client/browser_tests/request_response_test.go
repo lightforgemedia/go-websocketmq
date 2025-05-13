@@ -28,7 +28,7 @@ func TestBrowserClientRequestResponse(t *testing.T) {
 	}))
 
 	// Register a handler for the GetTime request
-	err := bs.OnRequest(shared_types.TopicGetTime,
+	err := bs.HandleClientRequest(shared_types.TopicGetTime,
 		func(client broker.ClientHandle, req shared_types.GetTimeRequest) (shared_types.GetTimeResponse, error) {
 			t.Logf("Server: Client %s requested time", client.ID())
 			return shared_types.GetTimeResponse{CurrentTime: time.Now().Format(time.RFC3339)}, nil
@@ -106,7 +106,7 @@ func TestBrowserClientRequestResponse(t *testing.T) {
 								}
 
 								// Make the request
-								window.client.request('system:get_time', {})
+								window.client.sendServerRequest('system:get_time', {})
 									.then(response => {
 										console.log('Promise resolved with:', response);
 
@@ -212,6 +212,6 @@ func TestBrowserClientRequestResponse(t *testing.T) {
 	// This is only useful when running with headless=false
 	if !result.Browser.IsHeadless() {
 		t.Log("Waiting 5 seconds so you can see the browser window...")
-		time.Sleep(5 * time.Second)
+		time.Sleep(60 * time.Second)
 	}
 }

@@ -31,11 +31,11 @@ type HandlerWrapper struct {
 
 // NewHandlerWrapper inspects the handler function and extracts type information.
 // Supported signatures:
-// Server OnRequest: func(ClientHandle, ReqStruct) (RespStruct, error)
-// Server OnRequest: func(ClientHandle, ReqStruct) error
+// Server HandleClientRequest: func(ClientHandle, ReqStruct) (RespStruct, error)
+// Server HandleClientRequest: func(ClientHandle, ReqStruct) error
 // Client Subscribe: func(MsgStruct) error
-// Client OnRequest: func(ReqStruct) (RespStruct, error)
-// Client OnRequest: func(ReqStruct) error
+// Client HandleServerRequest: func(ReqStruct) (RespStruct, error)
+// Client HandleServerRequest: func(ReqStruct) error
 func NewHandlerWrapper(handlerFunc interface{}) (*HandlerWrapper, error) {
 	fv := reflect.ValueOf(handlerFunc)
 	ft := fv.Type()
@@ -64,33 +64,33 @@ func NewHandlerWrapper(handlerFunc interface{}) (*HandlerWrapper, error) {
 		return hw, nil
 	}
 
-	// Client OnRequest: func(ReqStruct) (RespStruct, error) or func(ReqStruct) error
+	// Client HandleServerRequest: func(ReqStruct) (RespStruct, error) or func(ReqStruct) error
 	if numIn == 1 && (numOut == 1 || numOut == 2) {
 		hw.ReqType = ft.In(0)
 		if hw.ReqType.Kind() == reflect.Interface || (hw.ReqType.Kind() == reflect.Ptr && hw.ReqType.Elem().Kind() == reflect.Interface) {
-			return nil, fmt.Errorf("client OnRequest handler request type cannot be an interface: %s", ft.String())
+			return nil, fmt.Errorf("client HandleServerRequest handler request type cannot be an interface: %s", ft.String())
 		}
 		if numOut == 2 { // func(ReqStruct) (RespStruct, error)
 			hw.RespType = ft.Out(0)
 			if hw.RespType.Kind() == reflect.Interface || (hw.RespType.Kind() == reflect.Ptr && hw.RespType.Elem().Kind() == reflect.Interface) {
-				return nil, fmt.Errorf("client OnRequest handler response type cannot be an interface: %s", ft.String())
+				return nil, fmt.Errorf("client HandleServerRequest handler response type cannot be an interface: %s", ft.String())
 			}
 		}
 		return hw, nil
 	}
 
-	// Server OnRequest: func(ClientHandle, ReqStruct) (RespStruct, error) or func(ClientHandle, ReqStruct) error
+	// Server HandleClientRequest: func(ClientHandle, ReqStruct) (RespStruct, error) or func(ClientHandle, ReqStruct) error
 	if numIn == 2 && (numOut == 1 || numOut == 2) {
 		// First arg should be ClientHandle (interface) - we don't strictly check its type here
 		// as it's passed by the broker itself.
 		hw.ReqType = ft.In(1)
 		if hw.ReqType.Kind() == reflect.Interface || (hw.ReqType.Kind() == reflect.Ptr && hw.ReqType.Elem().Kind() == reflect.Interface) {
-			return nil, fmt.Errorf("server OnRequest handler request type cannot be an interface: %s", ft.String())
+			return nil, fmt.Errorf("server HandleClientRequest handler request type cannot be an interface: %s", ft.String())
 		}
 		if numOut == 2 { // func(ClientHandle, ReqStruct) (RespStruct, error)
 			hw.RespType = ft.Out(0)
 			if hw.RespType.Kind() == reflect.Interface || (hw.RespType.Kind() == reflect.Ptr && hw.RespType.Elem().Kind() == reflect.Interface) {
-				return nil, fmt.Errorf("server OnRequest handler response type cannot be an interface: %s", ft.String())
+				return nil, fmt.Errorf("server HandleClientRequest handler response type cannot be an interface: %s", ft.String())
 			}
 		}
 		return hw, nil

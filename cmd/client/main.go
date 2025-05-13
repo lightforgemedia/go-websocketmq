@@ -107,7 +107,7 @@ func main() {
 	}
 
 	// 4. Handle requests *from* the server
-	err = cli.OnRequest(app_shared_types.TopicClientGetStatus,
+	err = cli.HandleServerRequest(app_shared_types.TopicClientGetStatus,
 		func(req app_shared_types.ClientStatusQuery) (app_shared_types.ClientStatusReport, error) { // Types are concrete
 			logger.Info("Client: Received server request for client status", "query", req.QueryDetailLevel)
 			return app_shared_types.ClientStatusReport{
@@ -121,7 +121,7 @@ func main() {
 		logger.Error("Client: Failed to register handler for server requests on client status", "error", err)
 	}
 
-	err = cli.OnRequest(app_shared_types.TopicSlowClientRequest,
+	err = cli.HandleServerRequest(app_shared_types.TopicSlowClientRequest,
 		func(req app_shared_types.SlowClientRequest) (app_shared_types.SlowClientResponse, error) {
 			delay := time.Duration(req.DelayMilliseconds) * time.Millisecond
 			logger.Info("Client: Received server request for slow client response", "delay", delay)
