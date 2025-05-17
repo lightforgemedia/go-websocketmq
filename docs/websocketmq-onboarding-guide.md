@@ -159,14 +159,17 @@ WebSocketMQ supports several communication patterns:
 
 1. **Create a Broker**:
    ```go
-   // Create a logger
    logger := yourLoggerImplementation
 
-   // Create broker options
+   // Start with defaults and tweak only what you need
    brokerOpts := broker.DefaultOptions()
-   
-   // Create the broker
-   b := ps.New(logger, brokerOpts)
+   brokerOpts.PingInterval = 15 * time.Second
+
+   // Create the broker using the options struct
+   b, err := broker.NewWithOptions(brokerOpts)
+   if err != nil {
+       log.Fatal(err)
+   }
    ```
 
 2. **Create a WebSocket Handler**:
@@ -218,6 +221,18 @@ WebSocketMQ supports several communication patterns:
    // Process the response
    // ...
    ```
+
+### Go Client Setup with Options
+
+```go
+clientOpts := client.DefaultOptions()
+clientOpts.AutoReconnect = true
+
+cli, err := client.ConnectWithOptions("ws://localhost:8080/wsmq", clientOpts)
+if err != nil {
+    log.Fatal(err)
+}
+```
 
 ### Client-Side Implementation
 
@@ -286,6 +301,22 @@ For client-side implementation, you'll typically use JavaScript in the browser. 
 - **Message Size**: Keep message size small to minimize network overhead
 - **Subscription Management**: Limit the number of subscriptions per client
 - **Connection Pooling**: Consider connection pooling for high-traffic applications
+
+### Typed Request Helpers
+
+The Go library includes helpers to enforce compile-time safety when working with RPC.
+Use `client.GenericRequest[T]` on the client and `broker.GenericClientRequest[T]`
+on the server to automatically unmarshal responses:
+
+```go
+type TimeResp struct { CurrentTime string }
+
+resp, err := client.GenericRequest[TimeResp](cli, ctx, "time.now")
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(resp.CurrentTime)
+```
 
 ## Advanced Topics
 
