@@ -330,7 +330,7 @@ func TestClientProxyRequest(t *testing.T) {
 	clientB := testutil.NewTestClient(t, bs.WSURL, client.WithClientPingInterval(-1))
 
 	// Client A handler
-	err := clientA.OnRequest("demo.hello", func(req helloReq) (helloResp, error) {
+	err := clientA.HandleServerRequest("demo.hello", func(req helloReq) (helloResp, error) {
 		return helloResp{Reply: "hi " + req.Msg}, nil
 	})
 	if err != nil {
