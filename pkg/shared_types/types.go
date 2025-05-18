@@ -1,7 +1,10 @@
 // shared_types/types.go
 package shared_types
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Topic Constants - used by both client and server for routing.
 const (
@@ -13,7 +16,9 @@ const (
 	TopicSlowClientRequest = "client:slow_request" // Server sends to client, client is slow
 	TopicSlowServerRequest = "server:slow_request" // Client sends to server, server is slow
 	TopicBroadcastTest     = "test:broadcast"
-	TopicClientRegister    = "system:register" // Client registration
+	TopicClientRegister    = "system:register"     // Client registration
+	TopicProxyRequest      = "system:proxy"        // Client-to-client proxy request
+	TopicListClients       = "system:list_clients" // List connected clients
 )
 
 // --- Message Structs ---
@@ -107,4 +112,29 @@ type ClientRegistrationResponse struct {
 	ServerAssignedID string `json:"serverAssignedId"` // Server-generated ID that becomes the source of truth
 	ClientName       string `json:"clientName"`       // Confirmed or modified client name
 	ServerTime       string `json:"serverTime"`       // Server time for synchronization
+}
+
+// ProxyRequest describes a request from one client to another via the broker.
+type ProxyRequest struct {
+	TargetID string          `json:"targetId"`
+	Topic    string          `json:"topic"`
+	Payload  json.RawMessage `json:"payload"`
+}
+
+// ClientSummary contains basic information about a connected client.
+type ClientSummary struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	ClientType string `json:"clientType"`
+	ClientURL  string `json:"clientUrl"`
+}
+
+// ListClientsRequest allows filtering when listing connected clients.
+type ListClientsRequest struct {
+	ClientType string `json:"clientType,omitempty"`
+}
+
+// ListClientsResponse returns information about currently connected clients.
+type ListClientsResponse struct {
+	Clients []ClientSummary `json:"clients"`
 }

@@ -43,6 +43,8 @@ type Broker struct {
 
 	clientsMu      sync.RWMutex
 	managedClients map[string]*managedClient // clientID -> client
+	sessionIndexMu sync.RWMutex
+	sessionIndex   map[string]*managedClient // client provided ID -> client
 
 	requestHandlersMu sync.RWMutex
 	requestHandlers   map[string]*ergosockets.HandlerWrapper // topic -> handler
@@ -108,6 +110,7 @@ func New(opts ...Option) (*Broker, error) {
 			serverRequestTimeout: defaultServerRequestTimeout,
 		},
 		managedClients:     make(map[string]*managedClient),
+		sessionIndex:       make(map[string]*managedClient),
 		requestHandlers:    make(map[string]*ergosockets.HandlerWrapper),
 		publishSubscribers: make(map[string]map[*managedClient]struct{}),
 		shutdownChan:       make(chan struct{}),
@@ -140,6 +143,9 @@ func New(opts ...Option) (*Broker, error) {
 
 		// Update client information
 		mc.clientID = req.ClientID
+		b.sessionIndexMu.Lock()
+		b.sessionIndex[mc.clientID] = mc
+		b.sessionIndexMu.Unlock()
 
 		// Set client name based on provided name or URL
 		if req.ClientName != "" {
@@ -176,6 +182,44 @@ func New(opts ...Option) (*Broker, error) {
 	// Log error but don't fail if registration handler can't be added
 	if err != nil {
 		b.config.logger.Info(fmt.Sprintf("Broker: Failed to add client registration handler: %v", err))
+	}
+
+	// Handler for client-to-client proxy requests
+	err = b.HandleClientRequest(shared_types.TopicProxyRequest,
+		func(src ClientHandle, req shared_types.ProxyRequest) (json.RawMessage, error) {
+			dest, err := b.GetClient(req.TargetID)
+			if err != nil {
+				return nil, err
+			}
+			var resp json.RawMessage
+			if err := dest.SendClientRequest(src.Context(), req.Topic, req.Payload, &resp, b.config.serverRequestTimeout); err != nil {
+				return nil, err
+			}
+			return resp, nil
+		})
+	if err != nil {
+		b.config.logger.Info(fmt.Sprintf("Broker: Failed to add proxy handler: %v", err))
+	}
+
+	// Handler to list connected clients
+	err = b.HandleClientRequest(shared_types.TopicListClients,
+		func(ch ClientHandle, req shared_types.ListClientsRequest) (shared_types.ListClientsResponse, error) {
+			var list []shared_types.ClientSummary
+			b.IterateClients(func(c ClientHandle) bool {
+				if req.ClientType == "" || req.ClientType == c.ClientType() {
+					list = append(list, shared_types.ClientSummary{
+						ID:         c.ID(),
+						Name:       c.Name(),
+						ClientType: c.ClientType(),
+						ClientURL:  c.ClientURL(),
+					})
+				}
+				return true
+			})
+			return shared_types.ListClientsResponse{Clients: list}, nil
+		})
+	if err != nil {
+		b.config.logger.Info(fmt.Sprintf("Broker: Failed to add list clients handler: %v", err))
 	}
 
 	b.config.logger.Info(fmt.Sprintf("Broker: Initialized. Ping interval: %v, Client send buffer: %d", b.config.pingInterval, b.config.clientSendBuffer))
@@ -283,6 +327,12 @@ func (b *Broker) removeClient(mc *managedClient) {
 	mc.activeSubscriptionsMu.Unlock()
 	b.publishSubscribersMu.Unlock()
 
+	b.sessionIndexMu.Lock()
+	if cur, ok := b.sessionIndex[mc.clientID]; ok && cur == mc {
+		delete(b.sessionIndex, mc.clientID)
+	}
+	b.sessionIndexMu.Unlock()
+
 	// Close the connection after removing from maps and cancelling context
 	// This ensures no new messages are queued to its send channel after this point.
 	// StatusPolicyViolation might have been set by writePump if it was a slow client.
@@ -360,6 +410,17 @@ func (b *Broker) GetClient(clientID string) (ClientHandle, error) {
 	mc, ok := b.managedClients[clientID]
 	if !ok {
 		return nil, fmt.Errorf("client with ID '%s' not found", clientID)
+	}
+	return mc, nil
+}
+
+// GetClientBySessionID retrieves a handle to a connected client by its client-provided ID.
+func (b *Broker) GetClientBySessionID(sessionID string) (ClientHandle, error) {
+	b.sessionIndexMu.RLock()
+	mc, ok := b.sessionIndex[sessionID]
+	b.sessionIndexMu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("client with session ID '%s' not found", sessionID)
 	}
 	return mc, nil
 }
