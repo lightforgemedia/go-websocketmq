@@ -3,6 +3,7 @@ package broker_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -313,4 +314,72 @@ func TestBrokerClientDisconnect(t *testing.T) {
 	}
 
 	bs.Shutdown(context.Background())
+}
+
+type helloReq struct {
+	Msg string `json:"msg"`
+}
+type helloResp struct {
+	Reply string `json:"reply"`
+}
+
+func TestClientProxyRequest(t *testing.T) {
+	bs := testutil.NewBrokerServer(t, broker.WithPingInterval(-1))
+
+	clientA := testutil.NewTestClient(t, bs.WSURL, client.WithClientPingInterval(-1))
+	clientB := testutil.NewTestClient(t, bs.WSURL, client.WithClientPingInterval(-1))
+
+	// Client A handler
+	err := clientA.OnRequest("demo.hello", func(req helloReq) (helloResp, error) {
+		return helloResp{Reply: "hi " + req.Msg}, nil
+	})
+	if err != nil {
+		t.Fatalf("clientA handler: %v", err)
+	}
+
+	// Wait for both clients to connect
+	_, err = testutil.WaitForClient(t, bs.Broker, clientA.ID(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("wait clientA: %v", err)
+	}
+	_, err = testutil.WaitForClient(t, bs.Broker, clientB.ID(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("wait clientB: %v", err)
+	}
+
+	payloadBytes, _ := json.Marshal(helloReq{Msg: "B"})
+	proxyReq := app_shared_types.ProxyRequest{TargetID: clientA.ID(), Topic: "demo.hello", Payload: payloadBytes}
+
+	rawResp, errPayload, err := clientB.SendServerRequest(context.Background(), app_shared_types.TopicProxyRequest, proxyReq)
+	if err != nil || errPayload != nil {
+		t.Fatalf("proxy request failed: %v %v", err, errPayload)
+	}
+
+	var resp helloResp
+	_ = json.Unmarshal(*rawResp, &resp)
+	if resp.Reply != "hi B" {
+		t.Errorf("unexpected reply %v", resp.Reply)
+	}
+}
+
+func TestListClients(t *testing.T) {
+	bs := testutil.NewBrokerServer(t, broker.WithPingInterval(-1))
+
+	cli1 := testutil.NewTestClient(t, bs.WSURL, client.WithClientName("A"), client.WithClientType("browser"), client.WithClientPingInterval(-1))
+	cli2 := testutil.NewTestClient(t, bs.WSURL, client.WithClientName("B"), client.WithClientType("service"), client.WithClientPingInterval(-1))
+
+	_, _ = testutil.WaitForClient(t, bs.Broker, cli1.ID(), 2*time.Second)
+	_, _ = testutil.WaitForClient(t, bs.Broker, cli2.ID(), 2*time.Second)
+
+	listReq := app_shared_types.ListClientsRequest{}
+	rawResp, errPayload, err := cli1.SendServerRequest(context.Background(), app_shared_types.TopicListClients, listReq)
+	if err != nil || errPayload != nil {
+		t.Fatalf("list clients request failed: %v %v", err, errPayload)
+	}
+
+	var resp app_shared_types.ListClientsResponse
+	_ = json.Unmarshal(*rawResp, &resp)
+	if len(resp.Clients) < 2 {
+		t.Errorf("expected at least 2 clients, got %d", len(resp.Clients))
+	}
 }

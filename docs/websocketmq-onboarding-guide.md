@@ -494,6 +494,14 @@ function setupHandlers() {
 client.connect();
 ```
 
+## Built-in Utility Topics
+
+WebSocketMQ exposes several system topics to help manage connected clients.
+
+- `system:proxy` &mdash; Forward a request from one client to another. The request body should include `targetId`, `topic`, and `payload` fields. The handler returns the response from the destination client.
+- `system:list_clients` &mdash; Retrieve details about currently connected clients. Include `clientType` in the request to filter by type.
+- `system:register` &mdash; Clients automatically send this when connecting and may resend it to update their metadata.
+
 ## Conclusion
 
 WebSocketMQ provides a robust foundation for building real-time, bidirectional communication between clients and servers. By following the patterns and practices outlined in this guide, you can implement reliable messaging systems for your applications.
