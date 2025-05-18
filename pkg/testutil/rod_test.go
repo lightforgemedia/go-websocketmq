@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -53,6 +54,11 @@ func TestRodBrowser(t *testing.T) {
 					<p>This is a test page for the Rod Browser helper.</p>
 					<button id="testButton">Click Me</button>
 					<div id="result"></div>
+					<ul id="list">
+						<li class="item">Item 1</li>
+						<li class="item">Item 2</li>
+						<li class="item">Item 3</li>
+					</ul>
 				</div>
 			</body>
 			</html>
@@ -81,6 +87,18 @@ func TestRodBrowser(t *testing.T) {
 	require.NoError(t, err, "Should be able to unmarshal title")
 	assert.Equal(t, "Test Page", titleStr, "Page title should match")
 
+	// Test MustElements to find multiple elements
+	items := page.MustElements(".item")
+	assert.Equal(t, 3, len(items), "Should find 3 list items")
+	
+	// Test that each item has the expected text
+	for i, item := range items {
+		text, err := item.Text()
+		require.NoError(t, err, "Should be able to get item text")
+		expectedText := fmt.Sprintf("Item %d", i+1)
+		assert.Equal(t, expectedText, text, "Item text should match")
+	}
+
 	// Click the button
 	page.Click("#testButton")
 
@@ -91,6 +109,14 @@ func TestRodBrowser(t *testing.T) {
 	resultText, err := page.MustElement("#result").Text()
 	require.NoError(t, err, "Should be able to get result text")
 	assert.Equal(t, "Button was clicked!", resultText, "Result text should match")
+	
+	// Test Eval method 
+	evalResult, err := page.Eval("() => document.getElementsByClassName('item').length")
+	require.NoError(t, err, "Should be able to evaluate JavaScript")
+	var itemCount int
+	err = evalResult.Value.Unmarshal(&itemCount)
+	require.NoError(t, err, "Should be able to unmarshal eval result")
+	assert.Equal(t, 3, itemCount, "Eval should return 3 items")
 
 	// Get console logs
 	logs := page.GetConsoleLog()

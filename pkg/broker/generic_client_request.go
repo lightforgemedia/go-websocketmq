@@ -1,6 +1,9 @@
 package broker
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // GenericClientRequest sends a typed request to a client and decodes the response into type T.
 func GenericClientRequest[T any](ch ClientHandle, ctx context.Context, topic string, requestData interface{}, timeout time.Duration) (*T, error) {

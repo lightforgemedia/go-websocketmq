@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/proto"
 )
 
 // RodBrowser represents a go-rod browser instance with helper methods for testing.
@@ -123,6 +124,14 @@ func (rp *RodPage) WaitForNetworkIdle(timeout time.Duration) *RodPage {
 func (rp *RodPage) MustElement(selector string) *rod.Element {
 	rp.t.Helper()
 	return rp.page.MustElement(selector)
+}
+
+// MustElements finds all elements matching the selector and returns them.
+// This is useful for testing lists or multiple elements of the same type.
+// The method will fail the test if it cannot find the elements.
+func (rp *RodPage) MustElements(selector string) rod.Elements {
+	rp.t.Helper()
+	return rp.page.MustElements(selector)
 }
 
 // MustElementR finds an element by selector and regex and returns it.
@@ -298,4 +307,24 @@ func (rp *RodPage) EvalJS(js string) error {
 	rp.t.Helper()
 	_, err := rp.page.Eval(js)
 	return err
+}
+
+// Eval evaluates JavaScript code on the page and returns the result.
+// Unlike EvalJS, this method returns the full result object from the browser,
+// allowing access to the evaluated value through result.Value.Unmarshal().
+// This is useful when you need to retrieve data from the page.
+// Eval evaluates JavaScript code on the page and returns the raw result object.
+// This is a lower-level method that provides access to the full RuntimeRemoteObject,
+// useful when you need detailed information about the JavaScript execution result.
+//
+// Example:
+//
+//	result, err := page.Eval("document.title")
+//	if err != nil {
+//		t.Fatal(err)
+//	}
+//	title := result.Value.String()
+func (rp *RodPage) Eval(js string) (*proto.RuntimeRemoteObject, error) {
+	rp.t.Helper()
+	return rp.page.Eval(js)
 }

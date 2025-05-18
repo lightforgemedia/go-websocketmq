@@ -160,6 +160,24 @@ func WithClientURL(url string) Option {
 	}
 }
 
+// WithContext sets a parent context for the client. When the parent context is cancelled,
+// the client will shut down all operations. This allows integrating the client's lifetime
+// with application-level context management.
+// WithContext sets a custom context for the client, allowing for external
+// lifecycle management and cancellation control. The provided context will be
+// used as the parent context for all client operations.
+//
+// Example:
+//
+//	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+//	defer cancel()
+//	client, err := Connect("ws://localhost:8080/ws", WithContext(ctx))
+func WithContext(ctx context.Context) Option {
+	return func(c *Client) {
+		c.clientCtx, c.clientCancel = context.WithCancel(ctx)
+	}
+}
+
 // WithWriteTimeout sets the write timeout for sending messages to the server.
 func WithWriteTimeout(timeout time.Duration) Option {
 	return func(c *Client) {

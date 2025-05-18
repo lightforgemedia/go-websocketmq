@@ -352,4 +352,77 @@ func TestClientRequestVariadicPayload(t *testing.T) {
 	t.Logf("Request with payload sent, server received: %s", string(lastReceivedPayload))
 }
 
+func TestClientWithContext(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping in short mode")
+	}
+	t.Parallel()
+	
+	ms := testutil.NewMockServer(t, func(conn *websocket.Conn, srv *testutil.MockServer) {
+		// Handle registration and then block reading
+		var regEnv ergosockets.Envelope
+		regCtx, regCancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer regCancel()
+		err := wsjson.Read(regCtx, conn, &regEnv)
+		if err != nil {
+			t.Errorf("MockServer: Did not receive registration request: %v", err)
+			return
+		}
+
+		if regEnv.Topic == app_shared_types.TopicClientRegister {
+			var reg app_shared_types.ClientRegistration
+			if err := regEnv.DecodePayload(&reg); err != nil {
+				t.Errorf("Failed to decode registration payload: %v", err)
+				return
+			}
+
+			// Create response with server-assigned ID
+			respEnv, _ := ergosockets.NewEnvelope(regEnv.ID, ergosockets.TypeResponse, regEnv.Topic, app_shared_types.ClientRegistrationResponse{
+				ServerAssignedID: "server-" + reg.ClientID[:8],
+				ClientName:       reg.ClientName,
+				ServerTime:       time.Now().Format(time.RFC3339),
+			}, nil)
+			srv.Expect(1)
+			srv.Send(*respEnv)
+			t.Logf("MockServer: Handled registration request, assigned ID: server-%s", reg.ClientID[:8])
+		}
+		
+		// Keep reading until connection closes
+		for {
+			var msg interface{}
+			if err := wsjson.Read(context.Background(), conn, &msg); err != nil {
+				t.Logf("MockServer: Connection closed: %v", err)
+				return
+			}
+		}
+	})
+	defer ms.Close()
+
+	// Create a parent context that we can cancel
+	parentCtx, parentCancel := context.WithCancel(context.Background())
+	
+	// Create client with parent context
+	cli := testutil.NewTestClient(t, ms.WsURL, client.WithContext(parentCtx))
+	
+	// Give the client time to establish connection
+	time.Sleep(100 * time.Millisecond)
+	
+	// Cancel the parent context
+	parentCancel()
+	
+	// Give some time for cleanup
+	time.Sleep(100 * time.Millisecond)
+	
+	// Try to make a request - it should fail since context was cancelled
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	
+	_, err := client.GenericRequest[app_shared_types.GetTimeResponse](cli, ctx, app_shared_types.TopicGetTime)
+	if err == nil {
+		t.Error("Expected error after parent context cancellation, but got none")
+	}
+	
+	t.Logf("Client correctly shut down after parent context cancellation: %v", err)
+}
+
 // Use testutil.NewTestClient instead of defining our own
