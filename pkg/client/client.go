@@ -160,6 +160,24 @@ func WithClientURL(url string) Option {
 	}
 }
 
+// WithWriteTimeout sets the write timeout for sending messages to the server.
+func WithWriteTimeout(timeout time.Duration) Option {
+	return func(c *Client) {
+		if timeout > 0 {
+			c.config.writeTimeout = timeout
+		}
+	}
+}
+
+// WithReadTimeout sets the read timeout for responses from the server.
+func WithReadTimeout(timeout time.Duration) Option {
+	return func(c *Client) {
+		if timeout > 0 {
+			c.config.readTimeout = timeout
+		}
+	}
+}
+
 // Connect establishes a WebSocket connection.
 func Connect(urlStr string, opts ...Option) (*Client, error) {
 	clientCtx, clientCancel := context.WithCancel(context.Background())

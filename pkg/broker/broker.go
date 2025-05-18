@@ -97,6 +97,33 @@ func WithPingInterval(interval time.Duration) Option {
 	}
 }
 
+// WithWriteTimeout sets the write timeout for sending messages to clients.
+func WithWriteTimeout(timeout time.Duration) Option {
+	return func(b *Broker) {
+		if timeout > 0 {
+			b.config.writeTimeout = timeout
+		}
+	}
+}
+
+// WithReadTimeout sets the read timeout for client connections.
+func WithReadTimeout(timeout time.Duration) Option {
+	return func(b *Broker) {
+		if timeout > 0 {
+			b.config.readTimeout = timeout
+		}
+	}
+}
+
+// WithServerRequestTimeout sets the timeout for server-initiated requests to clients.
+func WithServerRequestTimeout(timeout time.Duration) Option {
+	return func(b *Broker) {
+		if timeout > 0 {
+			b.config.serverRequestTimeout = timeout
+		}
+	}
+}
+
 // New creates a new Broker.
 func New(opts ...Option) (*Broker, error) {
 	mainCtx, mainCancel := context.WithCancel(context.Background())
