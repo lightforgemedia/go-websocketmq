@@ -500,12 +500,13 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 							window.client = new WebSocketMQ.Client({});
 							console.log('Advanced client created');
 							
-							window.client.onConnect(() => {
-								console.log('Connected to WebSocket server');
-								document.getElementById('status').textContent = 'Connected';
-								
-								// Register handlers with timing
-								window.client.handleServerRequest('browser.slowOperation', timedHandler('slowOperation', async (req) => {
+							window.client.onConnect((event) => {
+								try {
+									console.log('Connected to WebSocket server');
+									document.getElementById('status').textContent = 'Connected';
+									
+									// Register handlers with timing
+									window.client.handleServerRequest('browser.slowOperation', timedHandler('slowOperation', async (req) => {
 									const delay = req.delay || 1000;
 									await new Promise(resolve => setTimeout(resolve, delay));
 									return { success: true, delayed: delay };
@@ -527,6 +528,10 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 									}
 									return { success: true };
 								}));
+								} catch (err) {
+									console.error('Error in onConnect:', err);
+									console.error('Error details:', err.message, err.stack);
+								}
 							});
 							
 							window.client.connect();
@@ -562,8 +567,10 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 	}
 	
 	// Check for console errors
-	consoleMessages := page.MustEval(`() => JSON.stringify(window.consoleLog || [])`)
-	t.Logf("Console messages: %s", consoleMessages)
+	consoleResult, err := page.Eval(`() => JSON.stringify(window.consoleLog || [])`)
+	if err == nil && consoleResult != nil {
+		t.Logf("Console messages: %s", consoleResult.Value)
+	}
 	
 	if !connected {
 		t.Fatal("Browser client failed to connect")
@@ -590,11 +597,13 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	
 	// Check if handlers were registered
-	hasSlowOpHandler := page.MustEval(`() => window.client && window.client._handlers && window.client._handlers.has && window.client._handlers.has('browser.slowOperation')`).Bool()
-	t.Logf("Has slowOperation handler: %v", hasSlowOpHandler)
+	handlerCheckResult, err := page.Eval(`() => window.client && window.client._handlers && window.client._handlers.has && window.client._handlers.has('browser.slowOperation')`)
+	if err == nil && handlerCheckResult != nil {
+		t.Logf("Has slowOperation handler: %v", handlerCheckResult.Value)
+	}
 	
 	// Get registered handler topics
-	handlerTopics := page.MustEval(`() => {
+	topicsResult, err := page.Eval(`() => {
 		if (window.client && window.client._handlers) {
 			if (window.client._handlers.entries) {
 				return Array.from(window.client._handlers.entries()).map(e => e[0]);
@@ -606,7 +615,9 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 		}
 		return [];
 	}`)
-	t.Logf("Registered handler topics: %v", handlerTopics)
+	if err == nil && topicsResult != nil {
+		t.Logf("Registered handler topics: %v", topicsResult.Value)
+	}
 
 	// Create control client
 	controlClient := testutil.NewTestClient(t, bs.WSURL)
