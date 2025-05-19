@@ -460,6 +460,19 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 				<script src="/websocketmq.js"></script>
 				<script>
 					window.commandLog = [];
+					window.consoleLog = [];
+					
+					// Capture console messages
+					const originalConsoleLog = console.log;
+					const originalConsoleError = console.error;
+					console.log = function(...args) {
+						window.consoleLog.push({type: 'log', args: args});
+						originalConsoleLog.apply(console, args);
+					};
+					console.error = function(...args) {
+						window.consoleLog.push({type: 'error', args: args});
+						originalConsoleError.apply(console, args);
+					};
 					
 					// Track command execution timing
 					async function timedHandler(name, handler) {
@@ -538,12 +551,22 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 	page := browser.MustPage(httpServer.URL).WaitForLoad()
 
 	// Wait for connection
+	var connected bool
 	for i := 0; i < 30; i++ {
 		time.Sleep(100 * time.Millisecond)
 		statusText, err := page.MustElement("#status").Text()
 		if err == nil && statusText == "Connected" {
+			connected = true
 			break
 		}
+	}
+	
+	// Check for console errors
+	consoleMessages := page.MustEval(`() => JSON.stringify(window.consoleLog || [])`)
+	t.Logf("Console messages: %s", consoleMessages)
+	
+	if !connected {
+		t.Fatal("Browser client failed to connect")
 	}
 
 	// Wait for browser client to connect and get ID from the broker
@@ -565,6 +588,25 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 	
 	// Give additional time for browser to complete handler registration after connection
 	time.Sleep(500 * time.Millisecond)
+	
+	// Check if handlers were registered
+	hasSlowOpHandler := page.MustEval(`() => window.client && window.client._handlers && window.client._handlers.has && window.client._handlers.has('browser.slowOperation')`).Bool()
+	t.Logf("Has slowOperation handler: %v", hasSlowOpHandler)
+	
+	// Get registered handler topics
+	handlerTopics := page.MustEval(`() => {
+		if (window.client && window.client._handlers) {
+			if (window.client._handlers.entries) {
+				return Array.from(window.client._handlers.entries()).map(e => e[0]);
+			} else if (window.client._handlers.keys) {
+				return Array.from(window.client._handlers.keys());
+			} else {
+				return Object.keys(window.client._handlers);
+			}
+		}
+		return [];
+	}`)
+	t.Logf("Registered handler topics: %v", handlerTopics)
 
 	// Create control client
 	controlClient := testutil.NewTestClient(t, bs.WSURL)
