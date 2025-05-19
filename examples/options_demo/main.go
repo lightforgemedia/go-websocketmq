@@ -16,7 +16,6 @@ import (
 	"github.com/lightforgemedia/go-websocketmq/pkg/broker"
 	"github.com/lightforgemedia/go-websocketmq/pkg/browser_client"
 	"github.com/lightforgemedia/go-websocketmq/pkg/client"
-	"github.com/lightforgemedia/go-websocketmq/pkg/shared_types"
 )
 
 // Example demonstrating the Options pattern and GenericClientRequest
@@ -95,7 +94,10 @@ func main() {
 	// Setup HTTP server with broker2
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", broker2.UpgradeHandler())
-	mux.Handle("/", browser_client.Handler("/"))
+	// Serve the JavaScript client
+	jsopts := browser_client.DefaultClientScriptOptions()
+	jsopts.Path = "/websocketmq.js"
+	mux.Handle(jsopts.Path, browser_client.ScriptHandler(jsopts))
 
 	server := &http.Server{
 		Addr:    ":8080",
@@ -106,7 +108,7 @@ func main() {
 	go func() {
 		logger.Info("Server starting on :8080")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("Server error:", err)
+			logger.Error("Server error", "error", err)
 		}
 	}()
 
@@ -115,20 +117,16 @@ func main() {
 
 	// Now demonstrate using GenericClientRequest from a client
 	ctx := context.Background()
-	wsClient, err := client.NewClient(
+	wsClient, err := client.Connect(
 		"ws://localhost:8080/ws",
 		client.WithLogger(logger),
-		client.WithReconnection(true),
+		client.WithAutoReconnect(10, 1*time.Second, 30*time.Second),
 	)
 	if err != nil {
 		log.Fatal("Failed to create client:", err)
 	}
 
-	// Connect the client
-	err = wsClient.Connect(ctx)
-	if err != nil {
-		log.Fatal("Failed to connect client:", err)
-	}
+	// Client is already connected from Connect() call
 
 	// Wait for registration
 	time.Sleep(500 * time.Millisecond)
@@ -194,7 +192,7 @@ func main() {
 	defer cancel()
 
 	// Shutdown sequence
-	wsClient.Disconnect()
+	wsClient.Close()
 	broker2.Shutdown(shutdownCtx)
 	broker1.Shutdown(shutdownCtx)
 	server.Shutdown(shutdownCtx)
