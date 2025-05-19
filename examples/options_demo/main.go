@@ -14,7 +14,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/lightforgemedia/go-websocketmq/pkg/broker"
-	"github.com/lightforgemedia/go-websocketmq/pkg/broker_client"
+	"github.com/lightforgemedia/go-websocketmq/pkg/browser_client"
 	"github.com/lightforgemedia/go-websocketmq/pkg/client"
 	"github.com/lightforgemedia/go-websocketmq/pkg/shared_types"
 )
@@ -95,7 +95,7 @@ func main() {
 	// Setup HTTP server with broker2
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", broker2.UpgradeHandler())
-	mux.Handle("/", broker_client.Handler("/"))
+	mux.Handle("/", browser_client.Handler("/"))
 
 	server := &http.Server{
 		Addr:    ":8080",
