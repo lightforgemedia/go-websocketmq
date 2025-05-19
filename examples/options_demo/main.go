@@ -61,13 +61,20 @@ func main() {
 		log.Fatal("Failed to create broker with options:", err)
 	}
 
-	// Add some custom functional options on top
-	broker2, err := broker.NewWithOptions(opts, 
-		broker.WithClientSendBuffer(32),  // Override the buffer size
-		broker.WithWriteTimeout(15 * time.Second),
-	)
+	// Create another broker with modified options
+	opts2 := broker.DefaultOptions()
+	opts2.Logger = logger
+	opts2.PingInterval = 15 * time.Second
+	opts2.ServerRequestTimeout = 30 * time.Second
+	opts2.AcceptOptions = &websocket.AcceptOptions{
+		Subprotocols: []string{"websocketmq"},
+	}
+	opts2.ClientSendBuffer = 32           // Override the buffer size
+	opts2.WriteTimeout = 15 * time.Second
+	
+	broker2, err := broker.NewWithOptions(opts2)
 	if err != nil {
-		log.Fatal("Failed to create broker with mixed options:", err)
+		log.Fatal("Failed to create broker with custom options:", err)
 	}
 
 	// Register handlers on broker2

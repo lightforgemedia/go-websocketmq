@@ -58,200 +58,10 @@ type Broker struct {
 	mainCancel   context.CancelFunc
 }
 
-// Option configures the Broker.
-type Option func(*Broker)
+// Functional options have been removed in favor of the Options pattern.
+// Use broker.NewWithOptions() with broker.Options struct instead.
 
-// WithLogger sets a custom logging implementation.
-func WithLogger(logger *slog.Logger) Option {
-	return func(b *Broker) {
-		if logger != nil {
-			b.config.logger = logger
-		}
-	}
-}
-
-// WithAcceptOptions provides custom websocket.AcceptOptions.
-func WithAcceptOptions(opts *websocket.AcceptOptions) Option {
-	return func(b *Broker) {
-		b.config.acceptOptions = opts
-	}
-}
-
-// WithClientSendBuffer sets the buffer size for outgoing messages per client.
-// Default is 16. Large buffers only delay, not prevent, issues with slow clients.
-func WithClientSendBuffer(size int) Option {
-	return func(b *Broker) {
-		if size > 0 {
-			b.config.clientSendBuffer = size
-		}
-	}
-}
-
-// WithPingInterval sets the server-initiated ping interval.
-// interval < 0: Disables server pings.
-// interval == 0: Uses the library's default ping interval (e.g., 30s).
-// interval > 0: Uses the specified interval.
-func WithPingInterval(interval time.Duration) Option {
-	return func(b *Broker) {
-		b.config.pingInterval = interval // Logic applied in New()
-	}
-}
-
-// WithWriteTimeout sets the write timeout for sending messages to clients.
-func WithWriteTimeout(timeout time.Duration) Option {
-	return func(b *Broker) {
-		if timeout > 0 {
-			b.config.writeTimeout = timeout
-		}
-	}
-}
-
-// WithReadTimeout sets the read timeout for client connections.
-func WithReadTimeout(timeout time.Duration) Option {
-	return func(b *Broker) {
-		if timeout > 0 {
-			b.config.readTimeout = timeout
-		}
-	}
-}
-
-// WithServerRequestTimeout sets the timeout for server-initiated requests to clients.
-func WithServerRequestTimeout(timeout time.Duration) Option {
-	return func(b *Broker) {
-		if timeout > 0 {
-			b.config.serverRequestTimeout = timeout
-		}
-	}
-}
-
-// New creates a new Broker.
-func New(opts ...Option) (*Broker, error) {
-	mainCtx, mainCancel := context.WithCancel(context.Background())
-	b := &Broker{
-		config: brokerConfig{
-			logger:               slog.Default(), // Discard by default
-			clientSendBuffer:     defaultClientSendBuffer,
-			writeTimeout:         defaultWriteTimeout,
-			readTimeout:          defaultReadTimeout,
-			pingInterval:         0, // Indicates "use default" initially
-			serverRequestTimeout: defaultServerRequestTimeout,
-		},
-		managedClients:     make(map[string]*managedClient),
-		sessionIndex:       make(map[string]*managedClient),
-		requestHandlers:    make(map[string]*ergosockets.HandlerWrapper),
-		publishSubscribers: make(map[string]map[*managedClient]struct{}),
-		shutdownChan:       make(chan struct{}),
-		mainCtx:            mainCtx,
-		mainCancel:         mainCancel,
-	}
-	for _, opt := range opts {
-		opt(b)
-	}
-
-	// Finalize ping interval logic
-	if b.config.pingInterval == 0 { // User passed 0, means use library default
-		b.config.pingInterval = libraryDefaultPingInterval
-	} else if b.config.pingInterval < 0 { // User passed negative, means disable
-		b.config.pingInterval = 0 // Set to 0 to effectively disable the ping loop
-	}
-	// If user passed > 0, it's already set.
-
-	if b.config.acceptOptions == nil {
-		b.config.acceptOptions = &websocket.AcceptOptions{} // Default allows all origins, no compression
-	}
-
-	// Add default client registration handler
-	err := b.HandleClientRequest(shared_types.TopicClientRegister, func(client ClientHandle, req shared_types.ClientRegistration) (shared_types.ClientRegistrationResponse, error) {
-		// Get the managedClient from the ClientHandle
-		mc, ok := client.(*managedClient)
-		if !ok {
-			return shared_types.ClientRegistrationResponse{}, fmt.Errorf("invalid client type")
-		}
-
-		// Update client information
-		mc.clientID = req.ClientID
-		b.sessionIndexMu.Lock()
-		b.sessionIndex[mc.clientID] = mc
-		b.sessionIndexMu.Unlock()
-
-		// Set client name based on provided name or URL
-		if req.ClientName != "" {
-			mc.name = req.ClientName
-		}
-
-		// Set client type
-		if req.ClientType != "" {
-			mc.clientType = req.ClientType
-		}
-
-		// Set client URL
-		if req.ClientURL != "" {
-			mc.clientURL = req.ClientURL
-		} else if mc.clientURL == "" && req.ClientType == "browser" {
-			// For browser clients without URL, use a default
-			mc.clientURL = "unknown-browser"
-		}
-
-		// Mark client as registered
-		mc.registered = true
-
-		// Log registration
-		mc.logger.Info(fmt.Sprintf("Broker: Client %s registered as %s (type: %s, URL: %s)", mc.id, mc.name, mc.clientType, mc.clientURL))
-
-		// Return response with server-assigned ID
-		return shared_types.ClientRegistrationResponse{
-			ServerAssignedID: mc.id,
-			ClientName:       mc.name,
-			ServerTime:       time.Now().Format(time.RFC3339),
-		}, nil
-	})
-
-	// Log error but don't fail if registration handler can't be added
-	if err != nil {
-		b.config.logger.Info(fmt.Sprintf("Broker: Failed to add client registration handler: %v", err))
-	}
-
-	// Handler for client-to-client proxy requests
-	err = b.HandleClientRequest(shared_types.TopicProxyRequest,
-		func(src ClientHandle, req shared_types.ProxyRequest) (json.RawMessage, error) {
-			dest, err := b.GetClient(req.TargetID)
-			if err != nil {
-				return nil, err
-			}
-			var resp json.RawMessage
-			if err := dest.SendClientRequest(src.Context(), req.Topic, req.Payload, &resp, b.config.serverRequestTimeout); err != nil {
-				return nil, err
-			}
-			return resp, nil
-		})
-	if err != nil {
-		b.config.logger.Info(fmt.Sprintf("Broker: Failed to add proxy handler: %v", err))
-	}
-
-	// Handler to list connected clients
-	err = b.HandleClientRequest(shared_types.TopicListClients,
-		func(ch ClientHandle, req shared_types.ListClientsRequest) (shared_types.ListClientsResponse, error) {
-			var list []shared_types.ClientSummary
-			b.IterateClients(func(c ClientHandle) bool {
-				if req.ClientType == "" || req.ClientType == c.ClientType() {
-					list = append(list, shared_types.ClientSummary{
-						ID:         c.ID(),
-						Name:       c.Name(),
-						ClientType: c.ClientType(),
-						ClientURL:  c.ClientURL(),
-					})
-				}
-				return true
-			})
-			return shared_types.ListClientsResponse{Clients: list}, nil
-		})
-	if err != nil {
-		b.config.logger.Info(fmt.Sprintf("Broker: Failed to add list clients handler: %v", err))
-	}
-
-	b.config.logger.Info(fmt.Sprintf("Broker: Initialized. Ping interval: %v, Client send buffer: %d", b.config.pingInterval, b.config.clientSendBuffer))
-	return b, nil
-}
+// The broker.New() function has been removed. Use broker.NewWithOptions() instead.
 
 // UpgradeHandler returns an http.HandlerFunc to handle WebSocket upgrade requests.
 func (b *Broker) UpgradeHandler() http.HandlerFunc {
@@ -990,5 +800,97 @@ func (b *Broker) IterateClients(f func(ClientHandle) bool) {
 		if !f(client) {
 			break
 		}
+	}
+}
+
+// setupDefaultHandlers adds the default system handlers to the broker
+func (b *Broker) setupDefaultHandlers() {
+	// Add default client registration handler
+	err := b.HandleClientRequest(shared_types.TopicClientRegister, func(client ClientHandle, req shared_types.ClientRegistration) (shared_types.ClientRegistrationResponse, error) {
+		// Get the managedClient from the ClientHandle
+		mc, ok := client.(*managedClient)
+		if !ok {
+			return shared_types.ClientRegistrationResponse{}, fmt.Errorf("invalid client type")
+		}
+
+		// Update client information
+		mc.clientID = req.ClientID
+		b.sessionIndexMu.Lock()
+		b.sessionIndex[mc.clientID] = mc
+		b.sessionIndexMu.Unlock()
+
+		// Set client name based on provided name or URL
+		if req.ClientName != "" {
+			mc.name = req.ClientName
+		}
+
+		// Set client type
+		if req.ClientType != "" {
+			mc.clientType = req.ClientType
+		}
+
+		// Set client URL
+		if req.ClientURL != "" {
+			mc.clientURL = req.ClientURL
+		} else if mc.clientURL == "" && req.ClientType == "browser" {
+			// For browser clients without URL, use a default
+			mc.clientURL = "unknown-browser"
+		}
+
+		// Mark client as registered
+		mc.registered = true
+
+		// Log registration
+		mc.logger.Info(fmt.Sprintf("Broker: Client %s registered as %s (type: %s, URL: %s)", mc.id, mc.name, mc.clientType, mc.clientURL))
+
+		// Return response with server-assigned ID
+		return shared_types.ClientRegistrationResponse{
+			ServerAssignedID: mc.id,
+			ClientName:       mc.name,
+			ServerTime:       time.Now().Format(time.RFC3339),
+		}, nil
+	})
+
+	// Log error but don't fail if registration handler can't be added
+	if err != nil {
+		b.config.logger.Info(fmt.Sprintf("Broker: Failed to add client registration handler: %v", err))
+	}
+
+	// Handler for client-to-client proxy requests
+	err = b.HandleClientRequest(shared_types.TopicProxyRequest,
+		func(src ClientHandle, req shared_types.ProxyRequest) (json.RawMessage, error) {
+			dest, err := b.GetClient(req.TargetID)
+			if err != nil {
+				return nil, err
+			}
+			var resp json.RawMessage
+			if err := dest.SendClientRequest(src.Context(), req.Topic, req.Payload, &resp, b.config.serverRequestTimeout); err != nil {
+				return nil, err
+			}
+			return resp, nil
+		})
+	if err != nil {
+		b.config.logger.Info(fmt.Sprintf("Broker: Failed to add proxy handler: %v", err))
+	}
+
+	// Handler to list connected clients
+	err = b.HandleClientRequest(shared_types.TopicListClients,
+		func(ch ClientHandle, req shared_types.ListClientsRequest) (shared_types.ListClientsResponse, error) {
+			var list []shared_types.ClientSummary
+			b.IterateClients(func(c ClientHandle) bool {
+				if req.ClientType == "" || req.ClientType == c.ClientType() {
+					list = append(list, shared_types.ClientSummary{
+						ID:         c.ID(),
+						Name:       c.Name(),
+						ClientType: c.ClientType(),
+						ClientURL:  c.ClientURL(),
+					})
+				}
+				return true
+			})
+			return shared_types.ListClientsResponse{Clients: list}, nil
+		})
+	if err != nil {
+		b.config.logger.Info(fmt.Sprintf("Broker: Failed to add list clients handler: %v", err))
 	}
 }

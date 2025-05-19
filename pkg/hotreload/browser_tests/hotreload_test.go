@@ -30,9 +30,11 @@ func TestHotReloadBasic(t *testing.T) {
 	testFile := filepath.Join(tempDir, "test.html")
 
 	// Create a broker server with accept options to allow any origin
-	bs := testutil.NewBrokerServer(t, broker.WithAcceptOptions(&websocket.AcceptOptions{
+	opts := broker.DefaultOptions()
+	opts.AcceptOptions = &websocket.AcceptOptions{
 		OriginPatterns: []string{"*"},
-	}))
+	}
+	bs := testutil.NewBrokerServer(t, opts)
 
 	// Create a file watcher
 	fw, err := filewatcher.New(

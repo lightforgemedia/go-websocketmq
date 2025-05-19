@@ -79,7 +79,9 @@ func TestBrokerPublishSubscribe(t *testing.T) {
 }
 
 func TestBrokerWaitForClient(t *testing.T) {
-	bs := testutil.NewBrokerServer(t, broker.WithPingInterval(-1)) // Disable pings for predictability
+	opts := broker.DefaultOptions()
+	opts.PingInterval = -1 // Disable pings for predictability
+	bs := testutil.NewBrokerServer(t, opts)
 
 	cli := testutil.NewTestClient(t, bs.WSURL, client.WithClientPingInterval(-1)) // Disable client pings too
 
@@ -94,7 +96,9 @@ func TestBrokerWaitForClient(t *testing.T) {
 }
 
 func TestBrokerClientToServerRequest(t *testing.T) {
-	bs := testutil.NewBrokerServer(t, broker.WithPingInterval(-1)) // Disable pings for predictability
+	opts := broker.DefaultOptions()
+	opts.PingInterval = -1 // Disable pings for predictability
+	bs := testutil.NewBrokerServer(t, opts)
 
 	cli := testutil.NewTestClient(t, bs.WSURL, client.WithClientPingInterval(-1)) // Disable client pings too
 
@@ -147,7 +151,10 @@ func TestBrokerClientToServerRequest(t *testing.T) {
 
 func TestBrokerSlowClientDisconnect(t *testing.T) {
 	// Small send buffer for the client on the broker side
-	bs := testutil.NewBrokerServer(t, broker.WithClientSendBuffer(1), broker.WithPingInterval(-1))
+	opts := broker.DefaultOptions()
+	opts.ClientSendBuffer = 1
+	opts.PingInterval = -1
+	bs := testutil.NewBrokerServer(t, opts)
 
 	// No defer bs.Shutdown here, we want to inspect after client is gone
 
@@ -271,7 +278,9 @@ func TestClientIDAndName(t *testing.T) {
 }
 
 func TestBrokerClientDisconnect(t *testing.T) {
-	bs := testutil.NewBrokerServer(t, broker.WithPingInterval(1000*time.Millisecond)) // Faster pings for test
+	opts := broker.DefaultOptions()
+	opts.PingInterval = 1000 * time.Millisecond // Faster pings for test
+	bs := testutil.NewBrokerServer(t, opts)
 	t.Logf("WsURL: %s", bs.WSURL)
 
 	cli := testutil.NewTestClient(t, bs.WSURL, client.WithClientPingInterval(-1)) // Client doesn't ping
@@ -324,7 +333,9 @@ type helloResp struct {
 }
 
 func TestClientProxyRequest(t *testing.T) {
-	bs := testutil.NewBrokerServer(t, broker.WithPingInterval(-1))
+	opts := broker.DefaultOptions()
+	opts.PingInterval = -1
+	bs := testutil.NewBrokerServer(t, opts)
 
 	clientA := testutil.NewTestClient(t, bs.WSURL, client.WithClientPingInterval(-1))
 	clientB := testutil.NewTestClient(t, bs.WSURL, client.WithClientPingInterval(-1))
@@ -363,7 +374,9 @@ func TestClientProxyRequest(t *testing.T) {
 }
 
 func TestListClients(t *testing.T) {
-	bs := testutil.NewBrokerServer(t, broker.WithPingInterval(-1))
+	opts := broker.DefaultOptions()
+	opts.PingInterval = -1
+	bs := testutil.NewBrokerServer(t, opts)
 
 	cli1 := testutil.NewTestClient(t, bs.WSURL, client.WithClientName("A"), client.WithClientType("browser"), client.WithClientPingInterval(-1))
 	cli2 := testutil.NewTestClient(t, bs.WSURL, client.WithClientName("B"), client.WithClientType("service"), client.WithClientPingInterval(-1))

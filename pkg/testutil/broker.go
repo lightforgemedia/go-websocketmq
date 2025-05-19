@@ -32,13 +32,20 @@ type BrokerServer struct {
 
 // NewBrokerServer creates a new broker and httptest.Server for testing.
 // It returns a BrokerServer that combines both.
-func NewBrokerServer(t *testing.T, opts ...broker.Option) *BrokerServer {
+func NewBrokerServer(t *testing.T, brokerOpts ...broker.Options) *BrokerServer {
 	t.Helper()
 
-	finalOpts := append([]broker.Option{broker.WithLogger(DefaultLogger)}, opts...)
-	b, err := broker.New(finalOpts...)
+	// Use default options or provided options
+	opts := broker.DefaultOptions()
+	if len(brokerOpts) > 0 {
+		opts = brokerOpts[0]
+	}
+	// Always use our test logger
+	opts.Logger = DefaultLogger
+	
+	b, err := broker.NewWithOptions(opts)
 	if err != nil {
-		t.Fatalf("broker.New: %v", err)
+		t.Fatalf("broker.NewWithOptions: %v", err)
 	}
 	srv := httptest.NewServer(b.UpgradeHandler())
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")

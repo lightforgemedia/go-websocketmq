@@ -24,9 +24,11 @@ func TestBrowserClientPublish(t *testing.T) {
 	}
 
 	// Create a broker server with accept options to allow any origin
-	bs := testutil.NewBrokerServer(t, broker.WithAcceptOptions(&websocket.AcceptOptions{
+	opts := broker.DefaultOptions()
+	opts.AcceptOptions = &websocket.AcceptOptions{
 		OriginPatterns: []string{"*"},
-	}))
+	}
+	bs := testutil.NewBrokerServer(t, opts)
 
 	// Create a channel to receive published messages
 	messagesCh := make(chan map[string]interface{}, 10)

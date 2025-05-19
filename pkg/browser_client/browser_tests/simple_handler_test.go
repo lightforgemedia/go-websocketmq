@@ -20,9 +20,11 @@ func TestSimpleHandlerRegistration(t *testing.T) {
 	}
 
 	// Create broker server
-	bs := testutil.NewBrokerServer(t, broker.WithAcceptOptions(&websocket.AcceptOptions{
+	opts := broker.DefaultOptions()
+	opts.AcceptOptions = &websocket.AcceptOptions{
 		OriginPatterns: []string{"*"},
-	}))
+	}
+	bs := testutil.NewBrokerServer(t, opts)
 
 	// Create HTTP server
 	mux := http.NewServeMux()

@@ -32,8 +32,7 @@ func main() {
 	opts.PingInterval = 15 * time.Second
 	opts.ClientSendBuffer = 32
 	
-	// You can also mix Options with functional options if needed:
-	// ergoBroker, err := broker.NewWithOptions(opts, broker.WithServerRequestTimeout(30*time.Second))
+	// Functional options have been removed. Use only the Options pattern.
 	
 	ergoBroker, err := broker.NewWithOptions(opts)
 	if err != nil {

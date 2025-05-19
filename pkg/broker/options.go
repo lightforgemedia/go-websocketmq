@@ -1,11 +1,14 @@
 package broker
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/lightforgemedia/go-websocketmq/pkg/ergosockets"
 )
 
 // Options contains configuration values for creating a Broker using NewWithOptions.
@@ -53,8 +56,7 @@ func DefaultOptions() Options {
 }
 
 // NewWithOptions creates a new Broker using an Options struct.
-// It validates the options and converts them to functional options before calling New().
-// Additional functional options may be supplied and will override values from the struct.
+// It validates the options and creates the broker with the specified configuration.
 //
 // Example:
 //     opts := broker.DefaultOptions()
@@ -63,43 +65,66 @@ func DefaultOptions() Options {
 //     b, err := broker.NewWithOptions(opts)
 //
 // Returns an error if validation fails.
-func NewWithOptions(opts Options, extraOpts ...Option) (*Broker, error) {
+func NewWithOptions(opts Options) (*Broker, error) {
 	// Validate options
 	if err := validateOptions(opts); err != nil {
 		return nil, err
 	}
 	
-	// Build functional options, only including non-zero values
-	optionFns := []Option{}
-	
-	// Always set logger (nil is valid)
-	optionFns = append(optionFns, WithLogger(opts.Logger))
-	
-	// Always set AcceptOptions (nil is valid)
-	optionFns = append(optionFns, WithAcceptOptions(opts.AcceptOptions))
-	
-	// Only apply non-zero values to avoid overriding defaults
-	if opts.ClientSendBuffer > 0 {
-		optionFns = append(optionFns, WithClientSendBuffer(opts.ClientSendBuffer))
-	}
-	if opts.WriteTimeout > 0 {
-		optionFns = append(optionFns, WithWriteTimeout(opts.WriteTimeout))
-	}
-	if opts.ReadTimeout > 0 {
-		optionFns = append(optionFns, WithReadTimeout(opts.ReadTimeout))
-	}
-	// PingInterval: 0 means default, negative means disable, both are valid
-	if opts.PingInterval != 0 {
-		optionFns = append(optionFns, WithPingInterval(opts.PingInterval))
-	}
-	if opts.ServerRequestTimeout > 0 {
-		optionFns = append(optionFns, WithServerRequestTimeout(opts.ServerRequestTimeout))
+	// Create broker with the specified configuration
+	mainCtx, mainCancel := context.WithCancel(context.Background())
+	b := &Broker{
+		config: brokerConfig{
+			logger:               opts.Logger,
+			clientSendBuffer:     opts.ClientSendBuffer,
+			writeTimeout:         opts.WriteTimeout,
+			readTimeout:          opts.ReadTimeout,
+			pingInterval:         opts.PingInterval,
+			serverRequestTimeout: opts.ServerRequestTimeout,
+			acceptOptions:        opts.AcceptOptions,
+		},
+		managedClients:     make(map[string]*managedClient),
+		sessionIndex:       make(map[string]*managedClient),
+		requestHandlers:    make(map[string]*ergosockets.HandlerWrapper),
+		publishSubscribers: make(map[string]map[*managedClient]struct{}),
+		shutdownChan:       make(chan struct{}),
+		mainCtx:            mainCtx,
+		mainCancel:         mainCancel,
 	}
 	
-	// Append extra options which can override struct values
-	optionFns = append(optionFns, extraOpts...)
+	// Apply defaults for zero values
+	if b.config.logger == nil {
+		b.config.logger = slog.Default()
+	}
+	if b.config.clientSendBuffer == 0 {
+		b.config.clientSendBuffer = defaultClientSendBuffer
+	}
+	if b.config.writeTimeout == 0 {
+		b.config.writeTimeout = defaultWriteTimeout
+	}
+	if b.config.readTimeout == 0 {
+		b.config.readTimeout = defaultReadTimeout
+	}
+	if b.config.serverRequestTimeout == 0 {
+		b.config.serverRequestTimeout = defaultServerRequestTimeout
+	}
 	
-	return New(optionFns...)
+	// Handle ping interval logic
+	if b.config.pingInterval == 0 {
+		b.config.pingInterval = libraryDefaultPingInterval
+	} else if b.config.pingInterval < 0 {
+		b.config.pingInterval = 0 // Disable ping
+	}
+	
+	if b.config.acceptOptions == nil {
+		b.config.acceptOptions = &websocket.AcceptOptions{}
+	}
+	
+	// Add default handlers (registration, proxy, list clients)
+	b.setupDefaultHandlers()
+	
+	b.config.logger.Info(fmt.Sprintf("Broker: Initialized. Ping interval: %v, Client send buffer: %d", b.config.pingInterval, b.config.clientSendBuffer))
+	return b, nil
 }
 
 // validateOptions validates the Options struct fields.

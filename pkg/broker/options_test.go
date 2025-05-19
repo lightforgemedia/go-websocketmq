@@ -173,16 +173,4 @@ func TestNewWithOptions_ZeroHandling(t *testing.T) {
 	// (We can't directly inspect the internal config, but we can verify it doesn't panic)
 }
 
-func TestNewWithOptions_MixWithFunctionalOptions(t *testing.T) {
-	opts := broker.DefaultOptions()
-	opts.ClientSendBuffer = 32
-	
-	// Add extra functional options that override struct values
-	b, err := broker.NewWithOptions(opts,
-		broker.WithClientSendBuffer(64), // This should override the struct value
-		broker.WithWriteTimeout(20*time.Second),
-	)
-	
-	require.NoError(t, err)
-	require.NotNil(t, b)
-}
+// Test removed: functional options are no longer supported

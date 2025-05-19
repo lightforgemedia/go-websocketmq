@@ -25,8 +25,10 @@ func TestHotReloadSimple(t *testing.T) {
 	err = os.WriteFile(testFile, []byte("<html><body>Initial content</body></html>"), 0644)
 	require.NoError(t, err, "Failed to write test file")
 
-	// Create a broker
-	b, err := broker.New()
+	// Create a broker using Options pattern
+	opts := broker.DefaultOptions()
+	
+	b, err := broker.NewWithOptions(opts)
 	require.NoError(t, err, "Failed to create broker")
 
 	// Create a file watcher

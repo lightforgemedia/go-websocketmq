@@ -41,13 +41,14 @@ func main() {
 
 	// Adapt slog for ErgoSockets library
 
-	// 1. Create a new ErgoSockets Broker
-	ergoBroker, err := broker.New(
-		broker.WithLogger(logger),
-		broker.WithAcceptOptions(&websocket.AcceptOptions{OriginPatterns: []string{"localhost:*"}}),
-		broker.WithPingInterval(15*time.Second), // Server pings every 15s
-		broker.WithClientSendBuffer(32),         // Slightly larger buffer
-	)
+	// 1. Create a new ErgoSockets Broker using Options pattern
+	opts := broker.DefaultOptions()
+	opts.Logger = logger
+	opts.AcceptOptions = &websocket.AcceptOptions{OriginPatterns: []string{"localhost:*"}}
+	opts.PingInterval = 15 * time.Second // Server pings every 15s
+	opts.ClientSendBuffer = 32           // Slightly larger buffer
+	
+	ergoBroker, err := broker.NewWithOptions(opts)
 	if err != nil {
 		logger.Error("Failed to create broker", "error", err)
 		os.Exit(1)

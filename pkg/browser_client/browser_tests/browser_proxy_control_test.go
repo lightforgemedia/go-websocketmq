@@ -27,9 +27,11 @@ func TestBrowserProxyControl(t *testing.T) {
 	}
 
 	// Create a broker server with accept options to allow any origin
-	bs := testutil.NewBrokerServer(t, broker.WithAcceptOptions(&websocket.AcceptOptions{
+	opts := broker.DefaultOptions()
+	opts.AcceptOptions = &websocket.AcceptOptions{
 		OriginPatterns: []string{"*"},
-	}))
+	}
+	bs := testutil.NewBrokerServer(t, opts)
 
 	// Create an HTTP server mux
 	mux := http.NewServeMux()
@@ -440,9 +442,11 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 	}
 
 	// Create broker server
-	bs := testutil.NewBrokerServer(t, broker.WithAcceptOptions(&websocket.AcceptOptions{
+	opts := broker.DefaultOptions()
+	opts.AcceptOptions = &websocket.AcceptOptions{
 		OriginPatterns: []string{"*"},
-	}))
+	}
+	bs := testutil.NewBrokerServer(t, opts)
 
 	// Create HTTP server
 	mux := http.NewServeMux()

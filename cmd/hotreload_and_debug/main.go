@@ -18,11 +18,12 @@ func main() {
 	// Setup basic logger
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	// Create broker with appropriate CORS settings
-	b, err := broker.New(
-		broker.WithLogger(logger),
-		broker.WithAcceptOptions(&websocket.AcceptOptions{OriginPatterns: []string{"localhost:*"}}),
-	)
+	// Create broker with appropriate CORS settings using Options pattern
+	opts := broker.DefaultOptions()
+	opts.Logger = logger
+	opts.AcceptOptions = &websocket.AcceptOptions{OriginPatterns: []string{"localhost:*"}}
+	
+	b, err := broker.NewWithOptions(opts)
 	if err != nil {
 		logger.Error("Failed to create broker", "error", err)
 		os.Exit(1)

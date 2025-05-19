@@ -23,9 +23,11 @@ func TestBrowserClientRequestResponse(t *testing.T) {
 	}
 
 	// Create a broker server with accept options to allow any origin
-	bs := testutil.NewBrokerServer(t, broker.WithAcceptOptions(&websocket.AcceptOptions{
+	opts := broker.DefaultOptions()
+	opts.AcceptOptions = &websocket.AcceptOptions{
 		OriginPatterns: []string{"*"},
-	}))
+	}
+	bs := testutil.NewBrokerServer(t, opts)
 
 	// Register a handler for the GetTime request
 	err := bs.HandleClientRequest(shared_types.TopicGetTime,

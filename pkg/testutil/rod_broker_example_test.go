@@ -17,9 +17,11 @@ import (
 // This test demonstrates how to use the Rod helper with a BrokerServer
 func TestRodWithBrokerServer(t *testing.T) {
 	// Create a broker server with accept options to allow any origin
-	bs := NewBrokerServer(t, broker.WithAcceptOptions(&websocket.AcceptOptions{
+	opts := broker.DefaultOptions()
+	opts.AcceptOptions = &websocket.AcceptOptions{
 		OriginPatterns: []string{"*"},
-	}))
+	}
+	bs := NewBrokerServer(t, opts)
 
 	// Register a handler for the get_time request
 	err := bs.HandleClientRequest(app_shared_types.TopicGetTime,

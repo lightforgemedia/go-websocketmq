@@ -29,21 +29,6 @@ opts.AcceptOptions = &websocket.AcceptOptions{
 broker, err := broker.NewWithOptions(opts)
 ```
 
-### Mixing with Functional Options
-
-You can also combine the Options pattern with functional options:
-
-```go
-opts := broker.DefaultOptions()
-opts.Logger = myLogger
-
-// Create broker with options struct plus additional functional options
-broker, err := broker.NewWithOptions(opts,
-    broker.WithClientSendBuffer(64),  // Override the buffer size
-    broker.WithWriteTimeout(15 * time.Second),
-)
-```
-
 ### Available Options
 
 The `Options` struct includes:
@@ -246,17 +231,10 @@ func TestBrowserProxyControl(t *testing.T) {
 
 ## Migration Guide
 
-If you're currently using functional options only:
+The functional options pattern has been removed. Use the Options pattern exclusively:
 
 ```go
-// Old way
-broker, err := broker.New(
-    broker.WithLogger(logger),
-    broker.WithPingInterval(15*time.Second),
-    broker.WithClientSendBuffer(32),
-)
-
-// New way (with Options pattern)
+// Create broker with Options pattern
 opts := broker.DefaultOptions()
 opts.Logger = logger
 opts.PingInterval = 15 * time.Second
@@ -277,4 +255,4 @@ resp, err := broker.GenericClientRequest[MyResponse](
     clientHandle, ctx, "topic", req, 5*time.Second)
 ```
 
-Both the old and new ways continue to work, so you can migrate at your own pace.
+The Options pattern is now the only supported way to configure the broker.

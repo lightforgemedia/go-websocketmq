@@ -18,8 +18,11 @@ func TestHotReload(t *testing.T) {
 		Level: slog.LevelDebug,
 	}))
 
-	// Create a broker
-	b, err := broker.New(broker.WithLogger(logger))
+	// Create a broker using Options pattern
+	opts := broker.DefaultOptions()
+	opts.Logger = logger
+	
+	b, err := broker.NewWithOptions(opts)
 	require.NoError(t, err, "Failed to create broker")
 
 	// Create a temporary directory for testing
