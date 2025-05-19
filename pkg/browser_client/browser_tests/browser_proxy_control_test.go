@@ -475,23 +475,28 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 					};
 					
 					// Track command execution timing
-					async function timedHandler(name, handler) {
-						return async (req) => {
+					function timedHandler(name, handler) {
+						return function(req) {
 							const start = Date.now();
 							window.commandLog.push({command: name, start: start});
-							try {
-								const result = await handler(req);
-								const duration = Date.now() - start;
-								window.commandLog[window.commandLog.length - 1].duration = duration;
-								window.commandLog[window.commandLog.length - 1].success = true;
-								return result;
-							} catch (error) {
-								const duration = Date.now() - start;
-								window.commandLog[window.commandLog.length - 1].duration = duration;
-								window.commandLog[window.commandLog.length - 1].success = false;
-								window.commandLog[window.commandLog.length - 1].error = error.message;
-								throw error;
-							}
+							
+							const handleAsync = async () => {
+								try {
+									const result = await handler(req);
+									const duration = Date.now() - start;
+									window.commandLog[window.commandLog.length - 1].duration = duration;
+									window.commandLog[window.commandLog.length - 1].success = true;
+									return result;
+								} catch (error) {
+									const duration = Date.now() - start;
+									window.commandLog[window.commandLog.length - 1].duration = duration;
+									window.commandLog[window.commandLog.length - 1].success = false;
+									window.commandLog[window.commandLog.length - 1].error = error.message;
+									throw error;
+								}
+							};
+							
+							return handleAsync();
 						};
 					}
 					
