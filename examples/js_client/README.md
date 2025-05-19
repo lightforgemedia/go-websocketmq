@@ -27,7 +27,7 @@ go run examples/js_client/main.go
 
 The example demonstrates:
 
-1. Creating a WebSocketMQ broker
+1. Creating a WebSocketMQ broker using the Options pattern
 2. Registering a request handler for the "system:get_time" topic
 3. Setting up an HTTP server with:
    - WebSocket endpoint at `/wsmq`
@@ -53,11 +53,20 @@ The JavaScript client automatically:
 The key parts of the example are:
 
 ```go
+// Create a broker using the new Options pattern
+opts := broker.DefaultOptions()
+opts.Logger = logger
+opts.AcceptOptions = &websocket.AcceptOptions{OriginPatterns: []string{"localhost:*"}}
+opts.PingInterval = 15 * time.Second
+opts.ClientSendBuffer = 32
+
+ergoBroker, err := broker.NewWithOptions(opts)
+
 // Register both the WebSocket handler and JavaScript client handler with default options
 ergoBroker.RegisterHandlersWithDefaults(mux)
 ```
 
-This sets up the WebSocket endpoint at the default path (`/wsmq`) and serves the JavaScript client at the default path (`/websocketmq.js`).
+This creates a broker using the structured Options approach and sets up the WebSocket endpoint at the default path (`/wsmq`) and serves the JavaScript client at the default path (`/websocketmq.js`).
 
 In the browser, the JavaScript client is used like this:
 

@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Browser Automation Example - WebSocketMQ</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .control-panel {
+            background-color: #f0f0f0;
+            padding: 20px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: inline-block;
+            width: 120px;
+            font-weight: bold;
+        }
+        input[type="text"], input[type="url"], input[type="email"] {
+            width: 300px;
+            padding: 5px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .result {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            padding: 10px;
+            margin-top: 20px;
+            border-radius: 5px;
+            display: none;
+        }
+        .screenshot {
+            max-width: 100%;
+            margin-top: 20px;
+            border: 1px solid #ccc;
+        }
+        .client-info {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background-color: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="client-info">
+        <strong>Client ID:</strong> <span id="client-id">Connecting...</span>
+    </div>
+
+    <h1>Browser Automation Example</h1>
+    
+    <div class="control-panel">
+        <h2>Form Automation Demo</h2>
+        <form id="demo-form">
+            <div class="form-group">
+                <label for="name">Name:</label>
+                <input type="text" id="name" name="name">
+            </div>
+            <div class="form-group">
+                <label for="email">Email:</label>
+                <input type="email" id="email" name="email">
+            </div>
+            <div class="form-group">
+                <label for="website">Website:</label>
+                <input type="url" id="website" name="website">
+            </div>
+            <div class="form-group">
+                <label for="message">Message:</label>
+                <textarea id="message" name="message" rows="4" cols="50"></textarea>
+            </div>
+            <button type="submit">Submit</button>
+            <button type="button" id="clear-btn">Clear</button>
+        </form>
+        
+        <div id="result" class="result"></div>
+    </div>
+    
+    <div class="control-panel">
+        <h2>Available Commands</h2>
+        <p>This page can be controlled remotely via the CLI tool. Available commands:</p>
+        <ul>
+            <li><code>browser.fillForm</code> - Fill out the form fields</li>
+            <li><code>browser.submitForm</code> - Submit the form</li>
+            <li><code>browser.clearForm</code> - Clear all form fields</li>
+            <li><code>browser.screenshot</code> - Take a screenshot</li>
+            <li><code>browser.scroll</code> - Scroll the page</li>
+            <li><code>browser.click</code> - Click an element by selector</li>
+        </ul>
+    </div>
+    
+    <div id="screenshot-container"></div>
+    
+    <script src="/websocketmq.js"></script>
+    <script>
+        let client;
+        let clientId;
+        
+        async function connectToServer() {
+            clientId = 'automation-' + Math.random().toString(36).substr(2, 9);
+            
+            client = new WebSocketMQ({
+                url: 'ws://localhost:8080/ws',
+                clientId: clientId,
+                clientName: 'Automation Demo',
+                clientType: 'browser',
+                reconnectInterval: 5000,
+                debug: true
+            });
+            
+            client.on('connected', () => {
+                document.getElementById('client-id').textContent = clientId;
+            });
+            
+            // Form filling command
+            await client.handleRequest('browser.fillForm', async (req) => {
+                const fields = req.fields;
+                let filled = [];
+                
+                for (const [fieldId, value] of Object.entries(fields)) {
+                    const field = document.getElementById(fieldId);
+                    if (field) {
+                        field.value = value;
+                        filled.push(fieldId);
+                    }
+                }
+                
+                return { success: true, filled: filled };
+            });
+            
+            // Form submission command
+            await client.handleRequest('browser.submitForm', async (req) => {
+                const form = document.getElementById('demo-form');
+                const formData = new FormData(form);
+                const data = {};
+                
+                for (const [key, value] of formData.entries()) {
+                    data[key] = value;
+                }
+                
+                // Simulate form submission
+                const result = document.getElementById('result');
+                result.style.display = 'block';
+                result.innerHTML = `<h3>Form Submitted!</h3><pre>${JSON.stringify(data, null, 2)}</pre>`;
+                
+                return { success: true, data: data };
+            });
+            
+            // Clear form command
+            await client.handleRequest('browser.clearForm', async (req) => {
+                document.getElementById('demo-form').reset();
+                document.getElementById('result').style.display = 'none';
+                return { success: true };
+            });
+            
+            // Screenshot command
+            await client.handleRequest('browser.screenshot', async (req) => {
+                try {
+                    // Using html2canvas if available, otherwise return error
+                    if (typeof html2canvas !== 'undefined') {
+                        const canvas = await html2canvas(document.body);
+                        const imgData = canvas.toDataURL('image/png');
+                        
+                        // Display the screenshot
+                        const img = document.createElement('img');
+                        img.src = imgData;
+                        img.className = 'screenshot';
+                        document.getElementById('screenshot-container').innerHTML = '';
+                        document.getElementById('screenshot-container').appendChild(img);
+                        
+                        return { success: true, dataUrl: imgData };
+                    } else {
+                        return { success: false, error: 'html2canvas not available' };
+                    }
+                } catch (error) {
+                    return { success: false, error: error.message };
+                }
+            });
+            
+            // Scroll command
+            await client.handleRequest('browser.scroll', async (req) => {
+                const { x = 0, y = 0 } = req;
+                window.scrollTo(x, y);
+                return { success: true, scrollX: window.scrollX, scrollY: window.scrollY };
+            });
+            
+            // Click command
+            await client.handleRequest('browser.click', async (req) => {
+                const { selector } = req;
+                const element = document.querySelector(selector);
+                
+                if (element) {
+                    element.click();
+                    return { success: true, element: selector };
+                } else {
+                    return { success: false, error: `Element not found: ${selector}` };
+                }
+            });
+            
+            await client.connect();
+        }
+        
+        // Form event handlers
+        document.getElementById('demo-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            // Handled by the submitForm command
+        });
+        
+        document.getElementById('clear-btn').addEventListener('click', () => {
+            document.getElementById('demo-form').reset();
+            document.getElementById('result').style.display = 'none';
+        });
+        
+        window.addEventListener('load', connectToServer);
+    </script>
+</body>
+</html>

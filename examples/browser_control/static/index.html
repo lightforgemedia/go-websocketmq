@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Browser Control Demo - WebSocketMQ</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .connected {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .disconnected {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .client-info {
+            background-color: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .log {
+            background-color: #f0f0f0;
+            padding: 10px;
+            border-radius: 5px;
+            height: 300px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-bottom: 1px solid #ccc;
+        }
+        .command {
+            color: #0066cc;
+            font-weight: bold;
+        }
+        .response {
+            color: #006600;
+        }
+        .error {
+            color: #cc0000;
+        }
+    </style>
+</head>
+<body>
+    <h1>Browser Control Demo</h1>
+    
+    <div id="status" class="status disconnected">
+        Disconnected
+    </div>
+    
+    <div id="client-info" class="client-info" style="display: none;">
+        <strong>Client ID:</strong> <span id="client-id"></span><br>
+        <strong>Client Name:</strong> <span id="client-name"></span>
+    </div>
+    
+    <h2>Command Log</h2>
+    <div id="log" class="log"></div>
+    
+    <script src="/websocketmq.js"></script>
+    <script>
+        let client;
+        let clientId;
+        
+        function updateStatus(connected) {
+            const statusEl = document.getElementById('status');
+            const clientInfoEl = document.getElementById('client-info');
+            
+            if (connected) {
+                statusEl.className = 'status connected';
+                statusEl.textContent = 'Connected';
+                clientInfoEl.style.display = 'block';
+            } else {
+                statusEl.className = 'status disconnected';
+                statusEl.textContent = 'Disconnected';
+                clientInfoEl.style.display = 'none';
+            }
+        }
+        
+        function logMessage(type, message) {
+            const logEl = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logEl.appendChild(entry);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+        
+        async function connectToServer() {
+            try {
+                // Generate a random client ID
+                clientId = 'browser-' + Math.random().toString(36).substr(2, 9);
+                
+                client = new WebSocketMQ({
+                    url: 'ws://localhost:8080/ws',
+                    clientId: clientId,
+                    clientName: 'Browser Control Demo',
+                    clientType: 'browser',
+                    reconnectInterval: 5000,
+                    debug: true
+                });
+                
+                // Handle connection events
+                client.on('connected', () => {
+                    updateStatus(true);
+                    document.getElementById('client-id').textContent = clientId;
+                    document.getElementById('client-name').textContent = 'Browser Control Demo';
+                    logMessage('command', 'Connected to WebSocketMQ broker');
+                });
+                
+                client.on('disconnected', () => {
+                    updateStatus(false);
+                    logMessage('error', 'Disconnected from WebSocketMQ broker');
+                });
+                
+                // Register command handlers
+                await client.handleRequest('browser.navigate', async (req) => {
+                    const url = req.url;
+                    logMessage('command', `Navigate command received: ${url}`);
+                    
+                    try {
+                        window.location.href = url;
+                        return { success: true, message: `Navigating to ${url}` };
+                    } catch (error) {
+                        return { success: false, error: error.message };
+                    }
+                });
+                
+                await client.handleRequest('browser.alert', async (req) => {
+                    const message = req.message;
+                    logMessage('command', `Alert command received: ${message}`);
+                    
+                    alert(message);
+                    return { success: true, message: 'Alert shown' };
+                });
+                
+                await client.handleRequest('browser.exec', async (req) => {
+                    const code = req.code;
+                    logMessage('command', `Execute command received: ${code}`);
+                    
+                    try {
+                        const result = eval(code);
+                        logMessage('response', `Execution result: ${result}`);
+                        return { success: true, result: String(result) };
+                    } catch (error) {
+                        logMessage('error', `Execution error: ${error.message}`);
+                        return { success: false, error: error.message };
+                    }
+                });
+                
+                await client.handleRequest('browser.info', async (req) => {
+                    logMessage('command', 'Info request received');
+                    
+                    return {
+                        userAgent: navigator.userAgent,
+                        url: window.location.href,
+                        title: document.title,
+                        viewport: {
+                            width: window.innerWidth,
+                            height: window.innerHeight
+                        }
+                    };
+                });
+                
+                // Connect to the server
+                await client.connect();
+                
+            } catch (error) {
+                logMessage('error', `Connection error: ${error.message}`);
+                console.error('Connection error:', error);
+            }
+        }
+        
+        // Connect when page loads
+        window.addEventListener('load', connectToServer);
+    </script>
+</body>
+</html>

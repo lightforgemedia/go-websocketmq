@@ -24,13 +24,18 @@ func main() {
 	logger := slog.New(logHandler)
 	slog.SetDefault(logger)
 
-	// Create a broker
-	ergoBroker, err := broker.New(
-		broker.WithLogger(logger),
-		broker.WithAcceptOptions(&websocket.AcceptOptions{OriginPatterns: []string{"localhost:*"}}),
-		broker.WithPingInterval(15*time.Second),
-		broker.WithClientSendBuffer(32),
-	)
+	// Create a broker using the new Options pattern
+	// This demonstrates how to use the structured Options approach
+	opts := broker.DefaultOptions()
+	opts.Logger = logger
+	opts.AcceptOptions = &websocket.AcceptOptions{OriginPatterns: []string{"localhost:*"}}
+	opts.PingInterval = 15 * time.Second
+	opts.ClientSendBuffer = 32
+	
+	// You can also mix Options with functional options if needed:
+	// ergoBroker, err := broker.NewWithOptions(opts, broker.WithServerRequestTimeout(30*time.Second))
+	
+	ergoBroker, err := broker.NewWithOptions(opts)
 	if err != nil {
 		logger.Error("Failed to create broker", "error", err)
 		os.Exit(1)
