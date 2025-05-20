@@ -3,6 +3,7 @@ package hotreload
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"sync"
@@ -81,25 +82,20 @@ func (hr *HotReload) Start() error {
 
 	// Start the file watcher
 	if err := hr.watcher.Start(); err != nil {
-		return err
+		return fmt.Errorf("failed to start file watcher: %w", err)
 	}
 
-	// Set up broker request handler for client errors
+	// Set up broker request handler for client errors.
+	// The JavaScript client will send a request to this topic when reporting errors.
 	err := hr.broker.HandleClientRequest(TopicClientError, func(client broker.ClientHandle, payload map[string]interface{}) error {
 		hr.handleClientError(client.ID(), payload)
+		// No response payload needed for error reporting, just acknowledge receipt
 		return nil
 	})
 	if err != nil {
-		return err
+		hr.logger.Error("Failed to register client error handler with broker", "error", err)
+		return fmt.Errorf("failed to setup client error handler: %w", err)
 	}
-
-	// Also set up a subscription to handle published client errors
-	// This is needed because the JavaScript client uses publish instead of request
-	hr.broker.IterateClients(func(client broker.ClientHandle) bool {
-		// Subscribe to the client error topic
-		client.Send(context.Background(), TopicClientError, nil)
-		return true
-	})
 
 	// Set up broker request handler for client ready notifications
 	err = hr.broker.HandleClientRequest(TopicHotReloadReady, func(client broker.ClientHandle, payload map[string]interface{}) error {
@@ -107,7 +103,8 @@ func (hr *HotReload) Start() error {
 		return nil
 	})
 	if err != nil {
-		return err
+		hr.logger.Error("Failed to register client ready handler with broker", "error", err)
+		return fmt.Errorf("failed to setup client ready handler: %w", err)
 	}
 
 	hr.logger.Info("Hot reload service started")
@@ -125,6 +122,37 @@ func (hr *HotReload) Stop() error {
 	return nil
 }
 
+// ForceReload triggers an immediate reload for all clients that are marked ready.
+// This is primarily for testing purposes.
+func (hr *HotReload) ForceReload() {
+	hr.logger.Info("Force reload requested")
+	hr.triggerReload()
+}
+
+// SetClientReady marks a client as ready for hot reload.
+// This is primarily for testing purposes.
+func (hr *HotReload) SetClientReady(clientID string, clientURL string) {
+	hr.handleClientReady(clientID, map[string]interface{}{
+		"url": clientURL,
+		"userAgent": "TestUserAgent",
+	})
+}
+
+// GetClientCount returns the number of clients that are ready for hot reload.
+// This is primarily for testing purposes.
+func (hr *HotReload) GetClientCount() int {
+	hr.clientsMu.RLock()
+	defer hr.clientsMu.RUnlock()
+	
+	ready := 0
+	for _, client := range hr.clients {
+		if client.status == "ready" {
+			ready++
+		}
+	}
+	return ready
+}
+
 // handleFileChange is called when a file changes
 func (hr *HotReload) handleFileChange(file string) {
 	hr.logger.Info("File changed, triggering hot reload", "file", file)
@@ -135,35 +163,33 @@ func (hr *HotReload) handleFileChange(file string) {
 
 // triggerReload sends a reload command to all connected clients
 func (hr *HotReload) triggerReload() {
-	// Get all connected clients
+	// Get all connected clients that are ready for hot reload
 	var clientIDs []string
-	hr.broker.IterateClients(func(client broker.ClientHandle) bool {
-		clientIDs = append(clientIDs, client.ID())
-		return true
-	})
-
-	// Send reload command to each client
-	ctx := context.Background()
-	for _, id := range clientIDs {
-		hr.logger.Info("Sending reload command to client", "client_id", id)
-
-		// Find the client handle
-		var clientHandle broker.ClientHandle
-		hr.broker.IterateClients(func(ch broker.ClientHandle) bool {
-			if ch.ID() == id {
-				clientHandle = ch
-				return false // Stop iteration
-			}
-			return true // Continue iteration
-		})
-
-		if clientHandle != nil {
-			// Send reload command
-			err := clientHandle.Send(ctx, TopicHotReload, struct{}{})
-			if err != nil {
-				hr.logger.Error("Failed to send reload command", "client_id", id, "error", err)
-			}
+	hr.clientsMu.RLock()
+	for id, info := range hr.clients {
+		if info.status == "ready" {
+			clientIDs = append(clientIDs, id)
 		}
+	}
+	hr.clientsMu.RUnlock()
+	
+	if len(clientIDs) == 0 {
+		hr.logger.Info("No ready clients to send hot reload command to")
+		return
+	}
+
+	hr.logger.Info("Sending reload command", "client_count", len(clientIDs))
+	
+	// Create a reload payload with timestamp
+	reloadPayload := map[string]interface{}{
+		"timestamp": time.Now().Unix(),
+	}
+	
+	// Use broker.Publish to send the message to all subscribed clients in one go
+	ctx := context.Background()
+	err := hr.broker.Publish(ctx, TopicHotReload, reloadPayload)
+	if err != nil {
+		hr.logger.Error("Failed to publish hot reload command", "error", err)
 	}
 }
 
