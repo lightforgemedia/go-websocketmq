@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"time"
 
 	"github.com/lightforgemedia/go-websocketmq/pkg/client"
 	"github.com/lightforgemedia/go-websocketmq/pkg/shared_types"
@@ -80,13 +79,13 @@ func connectToBroker() (*client.Client, error) {
 	opts := client.DefaultOptions()
 	opts.ClientName = "Control CLI"
 	opts.ClientType = "cli"
-	
+
 	return client.ConnectWithOptions("ws://localhost:8080/ws", opts)
 }
 
 func listClients(ctx context.Context, cli *client.Client) {
 	req := shared_types.ListClientsRequest{}
-	resp, err := client.Request[shared_types.ListClientsResponse](cli, ctx, shared_types.TopicListClients, req)
+	resp, err := client.GenericRequest[shared_types.ListClientsResponse](cli, ctx, shared_types.TopicListClients, req)
 	if err != nil {
 		log.Fatalf("Failed to list clients: %v", err)
 	}

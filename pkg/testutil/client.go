@@ -39,6 +39,7 @@ func DefaultClientOptions() ClientOptions {
 // It applies the default options and any additional options provided.
 func NewTestClient(t *testing.T, urlStr string, opts ...client.Option) *client.Client {
 	t.Helper()
+	// This function is kept for backward compatibility
 	return NewTestClientWithOptions(t, urlStr, DefaultClientOptions(), opts...)
 }
 
@@ -46,38 +47,36 @@ func NewTestClient(t *testing.T, urlStr string, opts ...client.Option) *client.C
 func NewTestClientWithOptions(t *testing.T, urlStr string, options ClientOptions, opts ...client.Option) *client.Client {
 	t.Helper()
 
-	// Build options from the provided ClientOptions
-	var defaultOpts []client.Option
+	// Create client.Options from the testutil.ClientOptions
+	clientOpts := client.DefaultOptions()
 
 	if options.Logger {
-		defaultOpts = append(defaultOpts, client.WithLogger(DefaultLogger))
+		clientOpts.Logger = DefaultLogger
 	}
 
 	if options.RequestTimeout > 0 {
-		defaultOpts = append(defaultOpts, client.WithDefaultRequestTimeout(options.RequestTimeout))
+		clientOpts.DefaultRequestTimeout = options.RequestTimeout
 	}
 
 	if options.AutoReconnect {
-		defaultOpts = append(defaultOpts, client.WithAutoReconnect(
-			options.MaxReconnectAttempts,
-			options.ReconnectMinDelay,
-			options.ReconnectMaxDelay,
-		))
+		clientOpts.AutoReconnect = true
+		clientOpts.ReconnectAttempts = options.MaxReconnectAttempts
+		clientOpts.ReconnectDelayMin = options.ReconnectMinDelay
+		clientOpts.ReconnectDelayMax = options.ReconnectMaxDelay
 	}
 
 	if options.ClientName != "" {
-		defaultOpts = append(defaultOpts, client.WithClientName(options.ClientName))
+		clientOpts.ClientName = options.ClientName
 	}
 
 	if options.ClientPingInterval != 0 {
-		defaultOpts = append(defaultOpts, client.WithClientPingInterval(options.ClientPingInterval))
+		clientOpts.PingInterval = options.ClientPingInterval
 	}
 
-	// Combine default options with provided options
-	finalOpts := append(defaultOpts, opts...)
+	// The client.ConnectWithOptions will handle the functional options
 
-	// Connect the client
-	cli, err := client.Connect(urlStr, finalOpts...)
+	// Connect the client with Options
+	cli, err := client.ConnectWithOptions(urlStr, clientOpts, opts...)
 	if err != nil && cli == nil { // If connect truly failed and didn't even return a client for reconnect
 		t.Fatalf("Client Connect failed and returned nil client: %v", err)
 	}
