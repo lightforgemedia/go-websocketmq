@@ -85,7 +85,7 @@ func connectToBroker() (*client.Client, error) {
 
 func listClients(ctx context.Context, cli *client.Client) {
 	req := shared_types.ListClientsRequest{}
-	resp, err := client.GenericRequest[shared_types.ListClientsResponse](cli, ctx, shared_types.TopicListClients, req)
+	resp, err := client.Request[shared_types.ListClientsResponse](cli, ctx, shared_types.TopicListClients, req)
 	if err != nil {
 		log.Fatalf("Failed to list clients: %v", err)
 	}

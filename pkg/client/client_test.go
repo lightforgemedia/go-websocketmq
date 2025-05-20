@@ -62,7 +62,7 @@ func TestClientConnectAndRequest(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	resp, err := client.GenericRequest[app_shared_types.GetTimeResponse](cli, ctx, app_shared_types.TopicGetTime)
+	resp, err := client.Request[app_shared_types.GetTimeResponse](cli, ctx, app_shared_types.TopicGetTime)
 	if err != nil {
 		t.Fatalf("Client request failed: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestClientAutoReconnect(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	resp, err := client.GenericRequest[app_shared_types.GetTimeResponse](cli, ctx, app_shared_types.TopicGetTime)
+	resp, err := client.Request[app_shared_types.GetTimeResponse](cli, ctx, app_shared_types.TopicGetTime)
 	if err != nil {
 		t.Fatalf("Client request after reconnect failed: %v (Connect attempts: %d)", err, connectAttempts)
 	}
@@ -325,7 +325,7 @@ func TestClientRequestVariadicPayload(t *testing.T) {
 	ctx := context.Background()
 
 	// Test 1: No payload argument
-	_, err := client.GenericRequest[map[string]string](cli, ctx, "topic_no_payload")
+	_, err := client.Request[map[string]string](cli, ctx, "topic_no_payload")
 	if err != nil {
 		t.Fatalf("Request with no payload failed: %v", err)
 	}
@@ -338,7 +338,7 @@ func TestClientRequestVariadicPayload(t *testing.T) {
 
 	// Test 2: With one payload argument
 	payloadData := app_shared_types.GetUserDetailsRequest{UserID: "var123"}
-	_, err = client.GenericRequest[map[string]string](cli, ctx, "topic_with_payload", payloadData)
+	_, err = client.Request[map[string]string](cli, ctx, "topic_with_payload", payloadData)
 	if err != nil {
 		t.Fatalf("Request with payload failed: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestClientWithContext(t *testing.T) {
 		t.Skip("Skipping in short mode")
 	}
 	t.Parallel()
-	
+
 	ms := testutil.NewMockServer(t, func(conn *websocket.Conn, srv *testutil.MockServer) {
 		// Handle registration and then block reading
 		var regEnv ergosockets.Envelope
@@ -386,7 +386,7 @@ func TestClientWithContext(t *testing.T) {
 			srv.Send(*respEnv)
 			t.Logf("MockServer: Handled registration request, assigned ID: server-%s", reg.ClientID[:8])
 		}
-		
+
 		// Keep reading until connection closes
 		for {
 			var msg interface{}
@@ -400,28 +400,28 @@ func TestClientWithContext(t *testing.T) {
 
 	// Create a parent context that we can cancel
 	parentCtx, parentCancel := context.WithCancel(context.Background())
-	
+
 	// Create client with parent context
 	cli := testutil.NewTestClient(t, ms.WsURL, client.WithContext(parentCtx))
-	
+
 	// Give the client time to establish connection
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// Cancel the parent context
 	parentCancel()
-	
+
 	// Give some time for cleanup
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// Try to make a request - it should fail since context was cancelled
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	
-	_, err := client.GenericRequest[app_shared_types.GetTimeResponse](cli, ctx, app_shared_types.TopicGetTime)
+
+	_, err := client.Request[app_shared_types.GetTimeResponse](cli, ctx, app_shared_types.TopicGetTime)
 	if err == nil {
 		t.Error("Expected error after parent context cancellation, but got none")
 	}
-	
+
 	t.Logf("Client correctly shut down after parent context cancellation: %v", err)
 }
 

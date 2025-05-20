@@ -38,7 +38,7 @@ func TestBrokerRequestResponse(t *testing.T) {
 	defer cancel()
 
 	// Using the new generic client.Request
-	resp, err := client.GenericRequest[app_shared_types.GetTimeResponse](cli, ctx, app_shared_types.TopicGetTime)
+	resp, err := client.Request[app_shared_types.GetTimeResponse](cli, ctx, app_shared_types.TopicGetTime)
 	if err != nil {
 		t.Fatalf("Client request failed: %v", err)
 	}
@@ -557,8 +557,8 @@ func TestClientProxyTargetTimesOut(t *testing.T) {
 
 	_, errPayload, err := clientB.SendServerRequest(ctx, app_shared_types.TopicProxyRequest, proxyReq)
 	require.Error(t, err)
-	
-	// Our updated proxy handler now returns error with code through errPayload 
+
+	// Our updated proxy handler now returns error with code through errPayload
 	// instead of directly in err
 	if errPayload != nil {
 		assert.Contains(t, errPayload.Message, "timed out after "+brokerSideTimeout.String())
@@ -649,11 +649,11 @@ func TestClientProxyTargetDisconnects(t *testing.T) {
 				return ProxySlowResponse{}, fmt.Errorf("internal test error: clientAInstance nil")
 			}
 			clientA_ID_Chan <- clientAInstance.ID() // Correctly call ID()
-			
+
 			// Immediately close in the same goroutine to ensure it happens
 			t.Logf("%s: Closing its own connection BEFORE responding.", clientA_Name)
 			clientAInstance.Close() // Correctly call Close()
-			
+
 			// Return an error because the client is self-terminating
 			return ProxySlowResponse{Message: "should not be sent"}, fmt.Errorf("client %s self-terminated during handling", clientA_Name)
 		},
@@ -663,7 +663,7 @@ func TestClientProxyTargetDisconnects(t *testing.T) {
 	// Make sure handler is registered before proceeding
 	_, err := testutil.WaitForClient(t, bs.Broker, clientAInstance.ID(), 2*time.Second)
 	require.NoError(t, err)
-	
+
 	// Store client A's ID for later use
 	clientAID := clientAInstance.ID()
 	t.Logf("ClientA's ID is: %s", clientAID)
@@ -686,7 +686,7 @@ func TestClientProxyTargetDisconnects(t *testing.T) {
 
 	// Send request and verify we get expected error
 	_, errPayload, errB := clientB.SendServerRequest(ctxForB, app_shared_types.TopicProxyRequest, proxyReq)
-	
+
 	// Wait for handler to be called if it hasn't been yet
 	select {
 	case <-handlerCalled:
@@ -694,39 +694,39 @@ func TestClientProxyTargetDisconnects(t *testing.T) {
 	case <-time.After(500 * time.Millisecond):
 		t.Log("Warning: Handler might not have been called")
 	}
-	
+
 	// The error could be in one of two places depending on how the client implementation works:
 	// 1. In the errB (main error)
 	// 2. In the errPayload (structured error payload)
 	// We need to check both and look for any indication of client disconnection
-	
+
 	t.Logf("ClientB received main error: %v", errB)
 	if errPayload != nil {
 		t.Logf("ClientB received error payload: %+v", errPayload)
 	}
-	
+
 	errorFound := false
-	
+
 	// Check main error
 	if errB != nil {
 		errorText := errB.Error()
-		if strings.Contains(errorText, "client "+clientAID+" context done") || 
-		   strings.Contains(errorText, "proxy target client") ||
-		   strings.Contains(errorText, "client not found") {
+		if strings.Contains(errorText, "client "+clientAID+" context done") ||
+			strings.Contains(errorText, "proxy target client") ||
+			strings.Contains(errorText, "client not found") {
 			errorFound = true
 		}
 	}
-	
+
 	// Check error payload
 	if errPayload != nil {
 		errorText := errPayload.Message
-		if strings.Contains(errorText, "client "+clientAID+" context done") || 
-		   strings.Contains(errorText, "proxy target client") ||
-		   strings.Contains(errorText, "client not found") {
+		if strings.Contains(errorText, "client "+clientAID+" context done") ||
+			strings.Contains(errorText, "proxy target client") ||
+			strings.Contains(errorText, "client not found") {
 			errorFound = true
 		}
 	}
-	
+
 	// Ensure we got at least one error either way
 	assert.True(t, errB != nil || errPayload != nil, "Expected either main error or error payload")
 	assert.True(t, errorFound, "Error should indicate client disconnection or not found in either main error or error payload")
@@ -1053,14 +1053,14 @@ func TestListClients(t *testing.T) {
 
 	// Test listing all clients
 	listReqAll := app_shared_types.ListClientsRequest{}
-	respAll, err := client.GenericRequest[app_shared_types.ListClientsResponse](cli1, context.Background(), app_shared_types.TopicListClients, listReqAll)
+	respAll, err := client.Request[app_shared_types.ListClientsResponse](cli1, context.Background(), app_shared_types.TopicListClients, listReqAll)
 	require.NoError(t, err)
 	require.NotNil(t, respAll)
 	assert.Len(t, respAll.Clients, 2, "Expected 2 clients when listing all")
 
 	// Test listing by type "browser"
 	listReqBrowser := app_shared_types.ListClientsRequest{ClientType: "browser"}
-	respBrowser, err := client.GenericRequest[app_shared_types.ListClientsResponse](cli1, context.Background(), app_shared_types.TopicListClients, listReqBrowser)
+	respBrowser, err := client.Request[app_shared_types.ListClientsResponse](cli1, context.Background(), app_shared_types.TopicListClients, listReqBrowser)
 	require.NoError(t, err)
 	require.NotNil(t, respBrowser)
 	if assert.Len(t, respBrowser.Clients, 1, "Expected 1 browser client") {

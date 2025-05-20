@@ -74,7 +74,7 @@ func TestBrokerHandleClientRequestDecode(t *testing.T) {
 
 		// Send request
 		ctx := context.Background()
-		resp, err := client.GenericRequest[BrokerValueResponse](cli, ctx, topicName, BrokerValueRequest{
+		resp, err := client.Request[BrokerValueResponse](cli, ctx, topicName, BrokerValueRequest{
 			Command: "fetch",
 			Count:   3,
 		})
@@ -97,10 +97,10 @@ func TestBrokerHandleClientRequestDecode(t *testing.T) {
 				// Verify the request was decoded correctly
 				require.NotNil(t, req)
 				assert.Equal(t, "query123", req.QueryID)
-				
+
 				// Check if the date was parsed correctly
 				expectedDate, _ := time.Parse(time.RFC3339, "2023-01-15T10:00:00Z")
-				assert.True(t, expectedDate.Equal(req.FromDate), 
+				assert.True(t, expectedDate.Equal(req.FromDate),
 					"Expected %v, got %v", expectedDate, req.FromDate)
 
 				// Return a pointer response
@@ -126,7 +126,7 @@ func TestBrokerHandleClientRequestDecode(t *testing.T) {
 		// Send request
 		ctx := context.Background()
 		fromDate, _ := time.Parse(time.RFC3339, "2023-01-15T10:00:00Z")
-		resp, err := client.GenericRequest[BrokerPtrResponse](cli, ctx, topicName, &BrokerPtrRequest{
+		resp, err := client.Request[BrokerPtrResponse](cli, ctx, topicName, &BrokerPtrRequest{
 			QueryID:  "query123",
 			FromDate: fromDate,
 		})
@@ -169,18 +169,18 @@ func TestBrokerHandleClientRequestDecode(t *testing.T) {
 		// Send request with explicitly null payload
 		ctx := context.Background()
 		nullPayload := json.RawMessage("null")
-		
+
 		// Get the raw request function to send null explicitly
 		rawResp, errPayload, err := cli.SendServerRequest(ctx, topicName, nullPayload)
 		require.NoError(t, err)
 		require.Nil(t, errPayload)
 		require.NotNil(t, rawResp)
-		
+
 		// Decode the response
 		var resp BrokerValueResponse
 		err = json.Unmarshal(*rawResp, &resp)
 		require.NoError(t, err)
-		
+
 		// Verify response
 		assert.True(t, requestHandled, "Request handler should have been called")
 		assert.Equal(t, "Processed null request", resp.Result)
@@ -210,10 +210,10 @@ func TestBrokerHandleClientRequestDecode(t *testing.T) {
 		// Send request with invalid JSON
 		ctx := context.Background()
 		invalidJSON := json.RawMessage(`{"command": "test", "count": invalid}`)
-		
+
 		// Get the raw request function to send invalid JSON
 		_, errPayload, err := cli.SendServerRequest(ctx, topicName, invalidJSON)
-		
+
 		// Should have an error
 		require.Error(t, err)
 		// We don't require errPayload to be non-nil because sometimes the error occurs
@@ -257,7 +257,7 @@ func TestBrokerHandleClientRequestDecode(t *testing.T) {
 			Command: "forbidden",
 			Count:   1,
 		})
-		
+
 		// Should have an error
 		require.Error(t, err)
 		require.NotNil(t, errPayload)
@@ -278,7 +278,7 @@ func TestBrokerHandleClientRequestDecode(t *testing.T) {
 		// Send request to topic with no handler
 		ctx := context.Background()
 		_, errPayload, err := cli.SendServerRequest(ctx, topicName, BrokerValueRequest{})
-		
+
 		// Should have an error
 		require.Error(t, err)
 		require.NotNil(t, errPayload)
@@ -314,12 +314,12 @@ func TestBrokerHandleClientRequestDecode(t *testing.T) {
 			Command: "process",
 			Count:   5,
 		})
-		
+
 		// Should succeed but with null/empty response
 		require.NoError(t, err)
 		require.Nil(t, errPayload)
 		assert.True(t, handlerCalled)
-		
+
 		// Response should be null or empty object
 		if rawResp != nil {
 			assert.Contains(t, []string{"null", "{}", ""}, string(*rawResp))

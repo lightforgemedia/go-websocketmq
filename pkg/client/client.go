@@ -65,8 +65,8 @@ type Client struct {
 	connManager *ConnectionManager
 
 	// For backward compatibility during transition
-	conn   *websocket.Conn
-	connMu sync.RWMutex
+	conn                  *websocket.Conn
+	connMu                sync.RWMutex
 	currentConnPumpCtx    context.Context
 	currentConnPumpCancel context.CancelFunc
 	currentConnPumpWg     sync.WaitGroup
@@ -243,19 +243,19 @@ func Connect(urlStr string, opts ...Option) (*Client, error) {
 			cli.Close() // Clean up if not reconnecting
 			return nil, fmt.Errorf("client initial connection failed and auto-reconnect disabled: %w", err)
 		}
-		
+
 		// Auto-reconnect is enabled, start the reconnection loop
 		cli.config.logger.Info(fmt.Sprintf("Client %s: Initial connection failed but auto-reconnect enabled. Starting reconnection process.", cli.id))
-		
+
 		// Use mutex to ensure only one reconnection loop is active
 		cli.reconnectingMu.Lock()
 		alreadyReconnecting := cli.isReconnecting
-		
+
 		if !alreadyReconnecting {
 			cli.config.logger.Info(fmt.Sprintf("Client %s: Starting initial reconnection process", cli.id))
 			cli.isReconnecting = true
 			cli.reconnectingMu.Unlock()
-			
+
 			go func() {
 				defer func() {
 					// Ensure we reset the reconnecting flag when done
@@ -270,7 +270,7 @@ func Connect(urlStr string, opts ...Option) (*Client, error) {
 			cli.config.logger.Info(fmt.Sprintf("Client %s: Reconnection already in progress, not starting another one", cli.id))
 			cli.reconnectingMu.Unlock()
 		}
-		
+
 		// Return the client instance even if initial connect fails but reconnect is on.
 		// The user can then try operations which will block/fail until connected.
 		cli.config.logger.Info(fmt.Sprintf("Client %s: Returning client instance with active reconnection", cli.id))
@@ -306,14 +306,14 @@ func NewConnectionManager(client *Client) *ConnectionManager {
 // Connect establishes a new WebSocket connection
 func (cm *ConnectionManager) Connect(ctx context.Context) error {
 	// Debug log for connection attempt
-	cm.client.config.logger.Debug(fmt.Sprintf("Client %s: Attempting to establish connection to %s", 
+	cm.client.config.logger.Debug(fmt.Sprintf("Client %s: Attempting to establish connection to %s",
 		cm.client.id, cm.client.urlStr))
-		
+
 	// Check if client is closed
 	cm.client.closedMu.Lock()
 	if cm.client.isClosed {
 		cm.client.closedMu.Unlock()
-		cm.client.config.logger.Info(fmt.Sprintf("Client %s: Connection attempt aborted - client is permanently closed", 
+		cm.client.config.logger.Info(fmt.Sprintf("Client %s: Connection attempt aborted - client is permanently closed",
 			cm.client.id))
 		return errors.New("client is permanently closed, cannot establish connection")
 	}
@@ -334,10 +334,10 @@ func (cm *ConnectionManager) Connect(ctx context.Context) error {
 	defer dialCancel()
 
 	// Attempt to connect
-	cm.client.config.logger.Debug(fmt.Sprintf("Client %s: Dialing WebSocket connection with timeout %v", 
+	cm.client.config.logger.Debug(fmt.Sprintf("Client %s: Dialing WebSocket connection with timeout %v",
 		cm.client.id, cm.client.config.defaultRequestTimeout))
 	conn, httpResp, err := websocket.Dial(dialCtx, urlWithID, cm.client.config.dialOptions)
-	
+
 	if err != nil {
 		errMsg := fmt.Sprintf("dial to %s failed: %v", urlWithID, err)
 		if httpResp != nil {
@@ -357,11 +357,11 @@ func (cm *ConnectionManager) Connect(ctx context.Context) error {
 
 	// Handle connection state transitions under lock
 	var oldState *ConnectionState
-	
+
 	// Log before acquiring lock
-	cm.client.config.logger.Debug(fmt.Sprintf("Client %s: Connection established, updating connection state", 
+	cm.client.config.logger.Debug(fmt.Sprintf("Client %s: Connection established, updating connection state",
 		cm.client.id))
-	
+
 	// Acquire lock to update connection state
 	cm.mu.Lock()
 	// Store old state for cleanup after lock release
@@ -369,7 +369,7 @@ func (cm *ConnectionManager) Connect(ctx context.Context) error {
 	// Set new connection state immediately
 	cm.state = newState
 	cm.mu.Unlock()
-	
+
 	// Close existing connection if any - outside the lock to prevent deadlocks
 	if oldState != nil {
 		cm.client.config.logger.Debug(fmt.Sprintf("Client %s: Closing previous connection", cm.client.id))
@@ -389,30 +389,30 @@ func (cm *ConnectionManager) Connect(ctx context.Context) error {
 func (c *Client) readPumpWithState(state *ConnectionState) {
 	defer func() {
 		c.config.logger.Debug(fmt.Sprintf("Client %s: readPump stopping for connection.", c.id))
-		
+
 		// Signal that this pump is done
 		state.waitGroup.Done()
-		
+
 		// If auto-reconnect is enabled and client is not permanently closed, trigger reconnect
 		c.closedMu.Lock()
 		isPermanentlyClosed := c.isClosed
 		c.closedMu.Unlock()
-		
+
 		if c.config.autoReconnect && !isPermanentlyClosed {
 			// Acquire the reconnection mutex before checking reconnection state
 			c.reconnectingMu.Lock()
 			alreadyReconnecting := c.isReconnecting
-			
+
 			// Debug logging for reconnection state
-			c.config.logger.Info(fmt.Sprintf("Client %s: Connection lost. Auto-reconnect: %v, Already reconnecting: %v", 
+			c.config.logger.Info(fmt.Sprintf("Client %s: Connection lost. Auto-reconnect: %v, Already reconnecting: %v",
 				c.id, c.config.autoReconnect, alreadyReconnecting))
-			
+
 			// Only start a new reconnectLoop if one isn't already running
 			if !alreadyReconnecting {
 				c.config.logger.Info(fmt.Sprintf("Client %s: Starting reconnection process", c.id))
 				c.isReconnecting = true
 				c.reconnectingMu.Unlock()
-				
+
 				go func() {
 					defer func() {
 						// Ensure we reset the reconnecting flag when done
@@ -431,13 +431,13 @@ func (c *Client) readPumpWithState(state *ConnectionState) {
 			c.config.logger.Info(fmt.Sprintf("Client %s: Connection closed. Auto-reconnect disabled or client permanently closed", c.id))
 		}
 	}()
-	
+
 	// Check if connection is valid
 	if state.conn == nil {
 		c.config.logger.Info(fmt.Sprintf("Client %s: readPump started with nil connection.", c.id))
 		return
 	}
-	
+
 	// Read messages in a loop
 	for {
 		// Check if connection should be closed
@@ -450,7 +450,7 @@ func (c *Client) readPumpWithState(state *ConnectionState) {
 		default:
 			// Continue reading
 		}
-		
+
 		// Read message from WebSocket
 		var envelope ergosockets.Envelope
 		err := wsjson.Read(state.ctx, state.conn, &envelope)
@@ -469,7 +469,7 @@ func (c *Client) readPumpWithState(state *ConnectionState) {
 			}
 			return
 		}
-		
+
 		// Process the envelope from the server
 		switch envelope.Type {
 		case ergosockets.TypePublish:
@@ -521,13 +521,13 @@ func (c *Client) writePumpWithState(state *ConnectionState) {
 		c.config.logger.Info(fmt.Sprintf("Client %s: writePump stopping for connection.", c.id))
 		state.waitGroup.Done()
 	}()
-	
+
 	// Check if connection is valid
 	if state.conn == nil {
 		c.config.logger.Info(fmt.Sprintf("Client %s: writePump started with nil connection.", c.id))
 		return
 	}
-	
+
 	// Process outgoing messages
 	for {
 		select {
@@ -538,22 +538,22 @@ func (c *Client) writePumpWithState(state *ConnectionState) {
 				state.conn.Close(websocket.StatusNormalClosure, "send channel closed")
 				return
 			}
-			
+
 			// Create write context with timeout
 			writeCtx, cancel := context.WithTimeout(state.ctx, c.config.writeTimeout)
 			err := wsjson.Write(writeCtx, state.conn, envelope)
 			cancel() // Always release the context resources
-			
+
 			if err != nil {
 				c.config.logger.Info(fmt.Sprintf("Client %s: writePump error: %v", c.id, err))
 				return // This will trigger cleanup in defer
 			}
-			
+
 		case <-state.ctx.Done():
 			// Connection context cancelled
 			c.config.logger.Info(fmt.Sprintf("Client %s: writePump stopping due to connection context.", c.id))
 			return
-			
+
 		case <-c.clientCtx.Done():
 			// Client shutting down
 			c.config.logger.Info(fmt.Sprintf("Client %s: writePump stopping due to client shutdown.", c.id))
@@ -568,21 +568,21 @@ func (c *Client) pingLoopWithState(state *ConnectionState) {
 		c.config.logger.Info(fmt.Sprintf("Client %s: pingLoop stopping for connection.", c.id))
 		state.waitGroup.Done()
 	}()
-	
+
 	// No pinging if interval is negative or zero
 	if c.config.pingInterval <= 0 {
 		return
 	}
-	
+
 	// Check if connection is valid
 	if state.conn == nil {
 		c.config.logger.Info(fmt.Sprintf("Client %s: pingLoop started with nil connection.", c.id))
 		return
 	}
-	
+
 	ticker := time.NewTicker(c.config.pingInterval)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ticker.C:
@@ -590,17 +590,17 @@ func (c *Client) pingLoopWithState(state *ConnectionState) {
 			pingCtx, cancel := context.WithTimeout(state.ctx, c.config.pingInterval/2)
 			err := state.conn.Ping(pingCtx)
 			cancel()
-			
+
 			if err != nil {
 				c.config.logger.Info(fmt.Sprintf("Client %s: ping failed: %v", c.id, err))
 				return // This will trigger cleanup in defer
 			}
-			
+
 		case <-state.ctx.Done():
 			// Connection context cancelled
 			c.config.logger.Info(fmt.Sprintf("Client %s: pingLoop stopping due to connection context.", c.id))
 			return
-			
+
 		case <-c.clientCtx.Done():
 			// Client shutting down
 			c.config.logger.Info(fmt.Sprintf("Client %s: pingLoop stopping due to client shutdown.", c.id))
@@ -681,14 +681,14 @@ func (c *Client) establishConnection(ctx context.Context) error {
 	err = c.sendRegistration()
 	if err != nil {
 		c.config.logger.Info(fmt.Sprintf("Client %s: Failed to send registration: %v", c.id, err))
-		
+
 		// Close the connection and return error
 		state := c.connManager.GetCurrentConnection()
 		if state != nil && state.conn != nil {
 			state.conn.Close(websocket.StatusInternalError, "registration failed")
 			c.connManager.UpdateConnection(nil)
 		}
-		
+
 		return fmt.Errorf("failed to register client: %w", err)
 	}
 
@@ -725,7 +725,7 @@ func (c *Client) sendRegistration() error {
 	}
 
 	// Send registration request and wait for response
-	response, err := GenericRequest[shared_types.ClientRegistrationResponse](c, context.Background(), shared_types.TopicClientRegister, registration)
+	response, err := Request[shared_types.ClientRegistrationResponse](c, context.Background(), shared_types.TopicClientRegister, registration)
 	if err != nil {
 		return fmt.Errorf("registration request failed: %w", err)
 	}
@@ -758,10 +758,10 @@ func (c *Client) resubscribeAll() {
 
 func (c *Client) reconnectLoop() {
 	// State management (setting/unsetting isReconnecting) is now handled by the caller
-	
+
 	defer func() {
 		c.config.logger.Info(fmt.Sprintf("Client %s: Exiting reconnect loop.", c.id))
-		
+
 		// Check if we need to verify and clean up the reconnecting state
 		// This is a safety mechanism in case the defer in the goroutine that called us doesn't execute
 		c.reconnectingMu.Lock()
@@ -781,7 +781,7 @@ func (c *Client) reconnectLoop() {
 	for {
 		// Check if client is permanently closed before attempting reconnection
 		c.closedMu.Lock()
-		if c.isClosed { 
+		if c.isClosed {
 			c.config.logger.Info(fmt.Sprintf("Client %s: Reconnect aborted - client is permanently closed", c.id))
 			c.closedMu.Unlock()
 			return
@@ -790,7 +790,7 @@ func (c *Client) reconnectLoop() {
 
 		// Check if overall client context is done
 		select {
-		case <-c.clientCtx.Done(): 
+		case <-c.clientCtx.Done():
 			c.config.logger.Info(fmt.Sprintf("Client %s: Reconnect aborted - client context cancelled", c.id))
 			return
 		default:
@@ -799,7 +799,7 @@ func (c *Client) reconnectLoop() {
 
 		// Check if we've reached max reconnect attempts
 		if c.config.reconnectAttempts > 0 && attempts >= c.config.reconnectAttempts {
-			c.config.logger.Info(fmt.Sprintf("Client %s: Max reconnect attempts (%d) reached. Stopping.", 
+			c.config.logger.Info(fmt.Sprintf("Client %s: Max reconnect attempts (%d) reached. Stopping.",
 				c.id, c.config.reconnectAttempts))
 			c.Close() // Permanently close if max attempts reached
 			return
@@ -820,9 +820,9 @@ func (c *Client) reconnectLoop() {
 			sleepDuration = c.config.reconnectDelayMin // Should not happen if currentDelay starts at min
 		}
 
-		c.config.logger.Info(fmt.Sprintf("Client %s: Waiting %v before reconnect attempt %d...", 
+		c.config.logger.Info(fmt.Sprintf("Client %s: Waiting %v before reconnect attempt %d...",
 			c.id, sleepDuration, attempts+1))
-		
+
 		// Use a timer instead of time.Sleep to allow for cancellation
 		timer := time.NewTimer(sleepDuration)
 		select {
@@ -835,7 +835,7 @@ func (c *Client) reconnectLoop() {
 		}
 
 		c.config.logger.Info(fmt.Sprintf("Client %s: Attempting to reconnect (attempt %d)...", c.id, attempts+1))
-		
+
 		// Try to establish a new connection
 		err := c.establishConnection(c.clientCtx)
 		if err == nil {
@@ -845,10 +845,10 @@ func (c *Client) reconnectLoop() {
 
 		// Log reconnection failure with detailed error
 		c.config.logger.Info(fmt.Sprintf("Client %s: Reconnect attempt %d failed: %v", c.id, attempts+1, err))
-		
+
 		// Increment attempts counter
 		attempts++
-		
+
 		// Apply exponential backoff with bounds
 		currentDelay *= 2 // Exponential backoff
 		if currentDelay > c.config.reconnectDelayMax {
@@ -857,7 +857,7 @@ func (c *Client) reconnectLoop() {
 		if currentDelay < c.config.reconnectDelayMin { // Should not happen
 			currentDelay = c.config.reconnectDelayMin
 		}
-		
+
 		c.config.logger.Debug(fmt.Sprintf("Client %s: Next reconnect delay: %v", c.id, currentDelay))
 	}
 }
@@ -1026,7 +1026,7 @@ func (c *Client) invokeSubscriptionHandler(hw *ergosockets.HandlerWrapper, env *
 	// Use the helper function to decode and prepare the argument
 	arg, err := ergosockets.DecodeAndPrepareArg(env.Payload, hw.MsgType)
 	if err != nil {
-		c.config.logger.Info(fmt.Sprintf("Client %s: Failed to decode publish payload for topic '%s': %v", 
+		c.config.logger.Info(fmt.Sprintf("Client %s: Failed to decode publish payload for topic '%s': %v",
 			c.id, env.Topic, err))
 		return
 	}
@@ -1034,7 +1034,7 @@ func (c *Client) invokeSubscriptionHandler(hw *ergosockets.HandlerWrapper, env *
 	// Call the handler function with our properly typed argument
 	results := hw.HandlerFunc.Call([]reflect.Value{arg})
 	if errVal, ok := results[0].Interface().(error); ok && errVal != nil {
-		c.config.logger.Info(fmt.Sprintf("Client %s: Subscription handler for topic '%s' returned error: %v", 
+		c.config.logger.Info(fmt.Sprintf("Client %s: Subscription handler for topic '%s' returned error: %v",
 			c.id, env.Topic, errVal))
 	}
 }
@@ -1042,14 +1042,14 @@ func (c *Client) invokeSubscriptionHandler(hw *ergosockets.HandlerWrapper, env *
 func (c *Client) invokeClientRequestHandler(hw *ergosockets.HandlerWrapper, reqEnv *ergosockets.Envelope) {
 	// Special handling for handlers that only return error (no response type)
 	if hw.ReqType == nil || hw.RespType == nil {
-		c.config.logger.Info(fmt.Sprintf("Client %s: Handler for topic '%s' has no request or response type defined", 
+		c.config.logger.Info(fmt.Sprintf("Client %s: Handler for topic '%s' has no request or response type defined",
 			c.id, reqEnv.Topic))
-		
+
 		// For handlers with no request/response types, we still need to call them with the right number of inputs
 		// Check the handler signature to determine how to call it
 		handlerType := hw.HandlerFunc.Type()
 		numIn := handlerType.NumIn()
-		
+
 		var results []reflect.Value
 		if numIn == 0 {
 			// No-arg handler
@@ -1063,17 +1063,17 @@ func (c *Client) invokeClientRequestHandler(hw *ergosockets.HandlerWrapper, reqE
 				// If it's a pointer, get the element type
 				reqType = handlerType.In(0).Elem()
 			}
-			
+
 			// Create a new value and decode the payload
 			arg, err := ergosockets.DecodeAndPrepareArg(reqEnv.Payload, reqType)
 			if err != nil {
 				c.config.logger.Info(fmt.Sprintf("Client %s: Failed to decode payload for special handler: %v", c.id, err))
 				arg = reflect.New(reqType).Elem() // Use a zero value as fallback
 			}
-			
+
 			results = hw.HandlerFunc.Call([]reflect.Value{arg})
 		}
-		
+
 		// Check for error result
 		var errResult error
 		if len(results) > 0 {
@@ -1081,16 +1081,16 @@ func (c *Client) invokeClientRequestHandler(hw *ergosockets.HandlerWrapper, reqE
 				errResult = errVal
 			}
 		}
-		
+
 		if errResult != nil {
-			c.config.logger.Info(fmt.Sprintf("Client %s: Handler for server topic '%s' returned error: %v", 
+			c.config.logger.Info(fmt.Sprintf("Client %s: Handler for server topic '%s' returned error: %v",
 				c.id, reqEnv.Topic, errResult))
-			errResp, _ := ergosockets.NewEnvelope(reqEnv.ID, ergosockets.TypeError, reqEnv.Topic, nil, 
+			errResp, _ := ergosockets.NewEnvelope(reqEnv.ID, ergosockets.TypeError, reqEnv.Topic, nil,
 				&ergosockets.ErrorPayload{Code: http.StatusInternalServerError, Message: errResult.Error()})
 			c.trySend(errResp)
 			return
 		}
-		
+
 		// Send empty ack response
 		if reqEnv.ID != "" {
 			ackEnv, _ := ergosockets.NewEnvelope(reqEnv.ID, ergosockets.TypeResponse, reqEnv.Topic, nil, nil)
@@ -1098,18 +1098,18 @@ func (c *Client) invokeClientRequestHandler(hw *ergosockets.HandlerWrapper, reqE
 		}
 		return
 	}
-	
+
 	// Normal case: Use the helper function to decode and prepare the argument
 	arg, err := ergosockets.DecodeAndPrepareArg(reqEnv.Payload, hw.ReqType)
 	if err != nil {
-		c.config.logger.Info(fmt.Sprintf("Client %s: Failed to decode server request payload for topic '%s': %v", 
+		c.config.logger.Info(fmt.Sprintf("Client %s: Failed to decode server request payload for topic '%s': %v",
 			c.id, reqEnv.Topic, err))
-		errResp, _ := ergosockets.NewEnvelope(reqEnv.ID, ergosockets.TypeError, reqEnv.Topic, nil, 
+		errResp, _ := ergosockets.NewEnvelope(reqEnv.ID, ergosockets.TypeError, reqEnv.Topic, nil,
 			&ergosockets.ErrorPayload{Code: http.StatusBadRequest, Message: "Invalid request payload from server: " + err.Error()})
 		c.trySend(errResp)
 		return
 	}
-	
+
 	// For debugging
 	c.config.logger.Info(fmt.Sprintf("Client %s: Successfully decoded payload for topic '%s'", c.id, reqEnv.Topic))
 
@@ -1123,9 +1123,9 @@ func (c *Client) invokeClientRequestHandler(hw *ergosockets.HandlerWrapper, reqE
 	}
 
 	if errResult != nil {
-		c.config.logger.Info(fmt.Sprintf("Client %s: HandleServerRequest handler for server topic '%s' returned error: %v", 
+		c.config.logger.Info(fmt.Sprintf("Client %s: HandleServerRequest handler for server topic '%s' returned error: %v",
 			c.id, reqEnv.Topic, errResult))
-		errResp, _ := ergosockets.NewEnvelope(reqEnv.ID, ergosockets.TypeError, reqEnv.Topic, nil, 
+		errResp, _ := ergosockets.NewEnvelope(reqEnv.ID, ergosockets.TypeError, reqEnv.Topic, nil,
 			&ergosockets.ErrorPayload{Code: http.StatusInternalServerError, Message: errResult.Error()})
 		c.trySend(errResp)
 		return
@@ -1133,7 +1133,7 @@ func (c *Client) invokeClientRequestHandler(hw *ergosockets.HandlerWrapper, reqE
 
 	if hw.RespType != nil { // Handler returns a response payload
 		respPayload := results[0].Interface() // This is already the concrete RespStruct or *RespStruct
-		
+
 		// Ensure null is properly handled for nil pointer response types
 		if respPayload == nil || (reflect.ValueOf(respPayload).Kind() == reflect.Ptr && reflect.ValueOf(respPayload).IsNil()) {
 			// Explicitly send a null payload
@@ -1141,12 +1141,12 @@ func (c *Client) invokeClientRequestHandler(hw *ergosockets.HandlerWrapper, reqE
 			c.trySend(ackEnv)
 			return
 		}
-		
+
 		respEnv, err := ergosockets.NewEnvelope(reqEnv.ID, ergosockets.TypeResponse, reqEnv.Topic, respPayload, nil)
 		if err != nil {
-			c.config.logger.Info(fmt.Sprintf("Client %s: Failed to create response envelope for server request on topic '%s': %v", 
+			c.config.logger.Info(fmt.Sprintf("Client %s: Failed to create response envelope for server request on topic '%s': %v",
 				c.id, reqEnv.Topic, err))
-			errResp, _ := ergosockets.NewEnvelope(reqEnv.ID, ergosockets.TypeError, reqEnv.Topic, nil, 
+			errResp, _ := ergosockets.NewEnvelope(reqEnv.ID, ergosockets.TypeError, reqEnv.Topic, nil,
 				&ergosockets.ErrorPayload{Code: http.StatusInternalServerError, Message: "Client failed to create response envelope"})
 			c.trySend(errResp)
 			return
@@ -1169,7 +1169,7 @@ func (c *Client) trySend(env *ergosockets.Envelope) {
 		c.connMu.RLock()
 		hasActiveConnection := c.conn != nil && c.currentConnPumpCtx != nil
 		c.connMu.RUnlock()
-		
+
 		if hasActiveConnection {
 			select {
 			case <-c.currentConnPumpCtx.Done():
@@ -1556,13 +1556,13 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// GenericRequest is the primary function for client-to-server requests.
+// Request is the primary function for client-to-server requests.
 // It handles sending the request and unmarshalling the response payload into type T.
 // reqData is variadic:
 // - If no reqData: sends a request with a JSON `null` payload.
 // - If one reqData: uses it as the payload.
 // - More than one reqData is a usage error (takes the first).
-func GenericRequest[T any](cli *Client, ctx context.Context, topic string, reqData ...interface{}) (*T, error) {
+func Request[T any](cli *Client, ctx context.Context, topic string, reqData ...interface{}) (*T, error) {
 	rawPayload, serverErrPayload, err := cli.SendServerRequest(ctx, topic, reqData...)
 	if err != nil {
 		if serverErrPayload != nil {
@@ -1617,7 +1617,7 @@ func FindClient(cli *Client, ctx context.Context, criteria FindClientCriteria) (
 		req.ClientType = criteria.ClientType
 	}
 
-	resp, err := GenericRequest[shared_types.ListClientsResponse](cli, ctx, shared_types.TopicListClients, req)
+	resp, err := Request[shared_types.ListClientsResponse](cli, ctx, shared_types.TopicListClients, req)
 	if err != nil {
 		return nil, fmt.Errorf("FindClient: failed to list clients: %w", err)
 	}

@@ -59,7 +59,7 @@ func main() {
 	logger.Info("Client: Requesting server time...")
 	fmt.Println("Client: Requesting server time...")
 	reqCtxTime, cancelTime := context.WithTimeout(ctx, 3*time.Second)
-	timeResp, err := client.GenericRequest[app_shared_types.GetTimeResponse](cli, reqCtxTime, app_shared_types.TopicGetTime)
+	timeResp, err := client.Request[app_shared_types.GetTimeResponse](cli, reqCtxTime, app_shared_types.TopicGetTime)
 	cancelTime()
 	if err != nil {
 		logger.Error("Client: GetTime request failed", "error", err)
@@ -73,7 +73,7 @@ func main() {
 	logger.Info("Client: Requesting user details for 'user123'...")
 	reqCtxUser, cancelUser := context.WithTimeout(ctx, 3*time.Second)
 	detailsReq := app_shared_types.GetUserDetailsRequest{UserID: "user123"}
-	userDetails, err := client.GenericRequest[app_shared_types.UserDetailsResponse](cli, reqCtxUser, app_shared_types.TopicUserDetails, detailsReq)
+	userDetails, err := client.Request[app_shared_types.UserDetailsResponse](cli, reqCtxUser, app_shared_types.TopicUserDetails, detailsReq)
 	cancelUser()
 	if err != nil {
 		logger.Error("Client: GetUserDetails request failed", "error", err)
@@ -84,7 +84,7 @@ func main() {
 	// Request non-existent user (expecting server error)
 	logger.Info("Client: Requesting details for 'user999' (expecting server error)...")
 	reqCtxUserNF, cancelUserNF := context.WithTimeout(ctx, 3*time.Second)
-	_, err = client.GenericRequest[app_shared_types.UserDetailsResponse](cli, reqCtxUserNF, app_shared_types.TopicUserDetails, app_shared_types.GetUserDetailsRequest{UserID: "user999"})
+	_, err = client.Request[app_shared_types.UserDetailsResponse](cli, reqCtxUserNF, app_shared_types.TopicUserDetails, app_shared_types.GetUserDetailsRequest{UserID: "user999"})
 	cancelUserNF()
 	if err != nil {
 		logger.Info("Client: GetUserDetails for non-existent user got expected error", "error", err)
@@ -136,7 +136,7 @@ func main() {
 	// Test error propagation from server (using TopicErrorTest)
 	logger.Info("Client: Requesting error test (should succeed without error)...")
 	reqCtxErrOK, cancelErrOK := context.WithTimeout(ctx, 3*time.Second)
-	_, err = client.GenericRequest[app_shared_types.ErrorTestResponse](cli, reqCtxErrOK, app_shared_types.TopicErrorTest, app_shared_types.ErrorTestRequest{ShouldError: false})
+	_, err = client.Request[app_shared_types.ErrorTestResponse](cli, reqCtxErrOK, app_shared_types.TopicErrorTest, app_shared_types.ErrorTestRequest{ShouldError: false})
 	cancelErrOK()
 	if err != nil {
 		logger.Error("Client: Error test (success case) FAILED unexpectedly", "error", err)
@@ -146,7 +146,7 @@ func main() {
 
 	logger.Info("Client: Requesting error test (should receive server error)...")
 	reqCtxErrFail, cancelErrFail := context.WithTimeout(ctx, 3*time.Second)
-	_, err = client.GenericRequest[app_shared_types.ErrorTestResponse](cli, reqCtxErrFail, app_shared_types.TopicErrorTest, app_shared_types.ErrorTestRequest{ShouldError: true})
+	_, err = client.Request[app_shared_types.ErrorTestResponse](cli, reqCtxErrFail, app_shared_types.TopicErrorTest, app_shared_types.ErrorTestRequest{ShouldError: true})
 	cancelErrFail()
 	if err != nil {
 		logger.Info("Client: Error test (failure case) PASSED with expected error", "error", err)
@@ -158,7 +158,7 @@ func main() {
 	logger.Info("Client: Requesting slow server response (expecting client timeout)...")
 	// Client's default request timeout is 5s, but this context makes it 100ms.
 	reqCtxClientTimeout, cancelClientTimeout := context.WithTimeout(ctx, 100*time.Millisecond)
-	_, err = client.GenericRequest[app_shared_types.SlowServerResponse](cli, reqCtxClientTimeout, app_shared_types.TopicSlowServerRequest, app_shared_types.SlowServerRequest{DelayMilliseconds: 500})
+	_, err = client.Request[app_shared_types.SlowServerResponse](cli, reqCtxClientTimeout, app_shared_types.TopicSlowServerRequest, app_shared_types.SlowServerRequest{DelayMilliseconds: 500})
 	cancelClientTimeout()
 	if err != nil {
 		logger.Info("Client: Slow server request test PASSED with expected client timeout", "error", err)

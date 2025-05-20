@@ -92,7 +92,7 @@ func TestHotReloadErrorHandling(t *testing.T) {
 
 		// Notify server that client is ready for hot reload
 		ctx := context.Background()
-		// Use SendServerRequest instead of GenericRequest to avoid unmarshaling empty response
+		// Use SendServerRequest instead of Request to avoid unmarshaling empty response
 		_, errPayload, err := cli.SendServerRequest(ctx, TopicHotReloadReady, map[string]interface{}{
 			"url":       "http://localhost:3000/test.html",
 			"userAgent": "TestUserAgent",
@@ -104,7 +104,7 @@ func TestHotReloadErrorHandling(t *testing.T) {
 		hr.clientsMu.RLock()
 		clientInfo, exists := hr.clients[clientID]
 		hr.clientsMu.RUnlock()
-		
+
 		assert.True(t, exists, "Client should be registered")
 		if exists {
 			assert.Equal(t, "ready", clientInfo.status)
@@ -127,7 +127,7 @@ func TestHotReloadErrorHandling(t *testing.T) {
 		}
 
 		// Send client error to server
-		// Use SendServerRequest instead of GenericRequest to avoid unmarshaling empty response
+		// Use SendServerRequest instead of Request to avoid unmarshaling empty response
 		_, errPayload, err = cli.SendServerRequest(ctx, TopicClientError, map[string]interface{}{
 			"message":   "Test JS error",
 			"filename":  "/js/test.js",
@@ -153,7 +153,7 @@ func TestHotReloadErrorHandling(t *testing.T) {
 		hr.clientsMu.RLock()
 		clientInfo, exists = hr.clients[clientID]
 		hr.clientsMu.RUnlock()
-		
+
 		assert.True(t, exists, "Client should still be registered")
 		if exists {
 			assert.Equal(t, 1, len(clientInfo.errors), "One error should be stored")
@@ -209,25 +209,25 @@ func TestHotReloadTriggerReload(t *testing.T) {
 	// Create multiple clients to test broadcast
 	var clients []*client.Client
 	var unsubscribeFunctions []func()
-	
+
 	const numClients = 5
 	reloadReceivedCount := 0
 	var reloadCountMutex sync.Mutex
 	reloadFinished := make(chan struct{})
-	
+
 	// First create all clients
 	for i := 0; i < numClients; i++ {
 		cli := testutil.NewTestClient(t, brokerServer.WSURL, client.WithClientName(
 			fmt.Sprintf("TestClient%d", i)))
 		defer cli.Close()
-		
+
 		clients = append(clients, cli)
-		
+
 		// Subscribe to hot reload topic
 		unsubscribe, err := cli.Subscribe(TopicHotReload, func(msg map[string]interface{}) error {
 			clientID := cli.ID() // Capture client ID inside closure
 			t.Logf("Client %s received reload message: %v", clientID, msg)
-			
+
 			reloadCountMutex.Lock()
 			reloadReceivedCount++
 			t.Logf("Reload count now: %d/%d", reloadReceivedCount, numClients)
@@ -241,25 +241,25 @@ func TestHotReloadTriggerReload(t *testing.T) {
 				}
 			}
 			reloadCountMutex.Unlock()
-			
+
 			return nil
 		})
 		require.NoError(t, err)
-		
+
 		// Store unsubscribe function for later cleanup
 		unsubscribeFunctions = append(unsubscribeFunctions, unsubscribe)
 	}
-	
+
 	// Setup deferred cleanup of all unsubscribe functions
 	for _, unsub := range unsubscribeFunctions {
 		defer unsub()
 	}
-	
+
 	// Now register all clients as ready
 	for i, cli := range clients {
 		// Register client as ready for hot reload
 		ctx := context.Background()
-		// Use SendServerRequest instead of GenericRequest to avoid unmarshaling empty response
+		// Use SendServerRequest instead of Request to avoid unmarshaling empty response
 		_, errPayload, err := cli.SendServerRequest(ctx, TopicHotReloadReady, map[string]interface{}{
 			"url": fmt.Sprintf("http://localhost:3000/client%d.html", i),
 		})
@@ -288,7 +288,7 @@ func TestHotReloadTriggerReload(t *testing.T) {
 		assert.Equal(t, numClients, reloadReceivedCount, "All clients should receive reload messages")
 	case <-time.After(5 * time.Second):
 		// Don't fail hard here, just log and continue
-		t.Logf("Timed out waiting for all reload messages. Only %d/%d clients received it", 
+		t.Logf("Timed out waiting for all reload messages. Only %d/%d clients received it",
 			reloadReceivedCount, numClients)
 		// Still validate that at least some clients received the message
 		assert.Greater(t, reloadReceivedCount, 0, "At least some clients should have received the reload message")
