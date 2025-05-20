@@ -141,46 +141,70 @@ func (b *Broker) addClient(mc *managedClient) {
 }
 
 func (b *Broker) removeClient(mc *managedClient) {
-	mc.cancel() // Signal all client-specific goroutines to stop FIRST
-
-	b.clientsMu.Lock()
-	if _, exists := b.managedClients[mc.id]; !exists {
-		b.clientsMu.Unlock() // Already removed
-		return
+	// First, cancel the client context to stop all goroutines associated with this client
+	mc.cancel()
+	
+	// Store client details for logging after removal
+	clientID := mc.id
+	clientName := mc.name
+	
+	// Define a function to handle the removal from maps with proper locking
+	// This helps minimize the window for deadlocks and race conditions
+	removeClientFromMaps := func() bool {
+		// First acquire the clients map lock
+		b.clientsMu.Lock()
+		defer b.clientsMu.Unlock()
+		
+		// Check if client exists - early return if already removed
+		if _, exists := b.managedClients[clientID]; !exists {
+			return false
+		}
+		
+		// Remove from the broker's clients map
+		delete(b.managedClients, clientID)
+		
+		// Now lock the session index to remove client from there if needed
+		b.sessionIndexMu.Lock()
+		defer b.sessionIndexMu.Unlock()
+		
+		// Remove from session index if it matches this client
+		if cur, ok := b.sessionIndex[mc.clientID]; ok && cur == mc {
+			delete(b.sessionIndex, mc.clientID)
+		}
+		
+		return true
 	}
-	delete(b.managedClients, mc.id)
-	b.clientsMu.Unlock()
-
-	b.publishSubscribersMu.Lock()
-	mc.activeSubscriptionsMu.Lock() // Lock client's subs before iterating
-	for topic := range mc.activeSubscriptions {
-		if subs, ok := b.publishSubscribers[topic]; ok {
-			delete(subs, mc)
-			if len(subs) == 0 {
-				delete(b.publishSubscribers, topic)
+	
+	// Define a function to handle subscription cleanup with proper locking
+	cleanupSubscriptions := func() {
+		b.publishSubscribersMu.Lock()
+		defer b.publishSubscribersMu.Unlock()
+		
+		mc.activeSubscriptionsMu.Lock()
+		defer mc.activeSubscriptionsMu.Unlock()
+		
+		// Remove client from all subscription maps
+		for topic := range mc.activeSubscriptions {
+			if subs, ok := b.publishSubscribers[topic]; ok {
+				delete(subs, mc)
+				if len(subs) == 0 {
+					delete(b.publishSubscribers, topic)
+				}
 			}
 		}
 	}
-	mc.activeSubscriptionsMu.Unlock()
-	b.publishSubscribersMu.Unlock()
-
-	b.sessionIndexMu.Lock()
-	if cur, ok := b.sessionIndex[mc.clientID]; ok && cur == mc {
-		delete(b.sessionIndex, mc.clientID)
+	
+	// First clean up subscriptions, then remove from client maps
+	cleanupSubscriptions()
+	clientWasRemoved := removeClientFromMaps()
+	
+	// If the client was successfully removed (wasn't already removed),
+	// close the connection and log the disconnection
+	if clientWasRemoved {
+		// Close the WebSocket connection
+		mc.conn.CloseRead(context.Background())
+		mc.logger.Info(fmt.Sprintf("Broker: Client %s (%s) disconnected and removed.", clientID, clientName))
 	}
-	b.sessionIndexMu.Unlock()
-
-	// Close the connection after removing from maps and cancelling context
-	// This ensures no new messages are queued to its send channel after this point.
-	// StatusPolicyViolation might have been set by writePump if it was a slow client.
-	// Otherwise, use StatusNormalClosure or StatusGoingAway.
-	mc.conn.CloseRead(context.Background())
-	// currentStatus := websocket.CloseStatus() // Check if already closed with a specific status
-	// if currentStatus == -1 {                 // Not yet closed or unknown status
-	// 	mc.conn.Close(websocket.StatusNormalClosure, "client removed")
-	// }
-
-	mc.logger.Info(fmt.Sprintf("Broker: Client %s disconnected and removed.", mc.id))
 }
 
 // HandleClientRequest registers a handler for a specific request topic from clients.
@@ -469,14 +493,6 @@ func (mc *managedClient) readPump() {
 
 	if readDeadlineDuration > 0 {
 		mc.conn.SetReadLimit(1024 * 1024) // Max message size 1MB
-		// _ = mc.conn.SetReadDeadline(ergosockets.TimeNow().Add(readDeadlineDuration))
-		// mc.conn.SetPongHandler(func(string) error {
-		// 	// mc.logger.Info(fmt.Sprintf("Broker: Pong received from client %s", mc.id)
-		// 	if readDeadlineDuration > 0 {
-		// 		_ = mc.conn.SetReadDeadline(ergosockets.TimeNow().Add(readDeadlineDuration))
-		// 	}
-		// 	return nil
-		// })
 	}
 
 	for {
@@ -503,9 +519,6 @@ func (mc *managedClient) readPump() {
 			return // Exits loop, triggers defer removeClient
 		}
 
-		// if readDeadlineDuration > 0 { // Refresh read deadline on successful message read
-		// 	_ = mc.conn.SetReadDeadline(ergosockets.TimeNow().Add(readDeadlineDuration))
-		// }
 
 		// Process envelope
 		switch env.Type {
@@ -548,43 +561,19 @@ func (mc *managedClient) handleClientRequest(reqEnv *ergosockets.Envelope) {
 		return
 	}
 
-	// Create a new instance of the request type
-	var reqPayloadVal reflect.Value
-
-	// Check if the request type is a pointer or a value type
-	if handlerWrapper.ReqType.Kind() == reflect.Ptr {
-		// If it's a pointer type, create a new instance of the pointed-to type
-		reqPayloadVal = reflect.New(handlerWrapper.ReqType.Elem())
-	} else {
-		// If it's a value type, create a new instance of the type itself
-		reqPayloadVal = reflect.New(handlerWrapper.ReqType)
-	}
-
-	// Unmarshal the payload into the new instance
-	if reqEnv.Payload != nil && string(reqEnv.Payload) != "null" { // Handle null payload for empty structs
-		if err := json.Unmarshal(reqEnv.Payload, reqPayloadVal.Interface()); err != nil {
-			mc.logger.Info(fmt.Sprintf("Broker: Failed to unmarshal request payload for topic '%s' from client %s: %v. Payload: %s", reqEnv.Topic, mc.id, err, string(reqEnv.Payload)))
-			errEnv, _ := ergosockets.NewEnvelope(reqEnv.ID, ergosockets.TypeError, reqEnv.Topic, nil,
-				&ergosockets.ErrorPayload{Code: http.StatusBadRequest, Message: "Invalid request payload: " + err.Error()})
-			mc.trySend(errEnv)
-			return
-		}
+	// Decode and prepare the argument using the helper function
+	reqArg, err := ergosockets.DecodeAndPrepareArg(reqEnv.Payload, handlerWrapper.ReqType)
+	if err != nil {
+		mc.logger.Info(fmt.Sprintf("Broker: Failed to decode request payload for topic '%s' from client %s: %v", reqEnv.Topic, mc.id, err))
+		errEnv, _ := ergosockets.NewEnvelope(reqEnv.ID, ergosockets.TypeError, reqEnv.Topic, nil,
+			&ergosockets.ErrorPayload{Code: http.StatusBadRequest, Message: "Invalid request payload: " + err.Error()})
+		mc.trySend(errEnv)
+		return
 	}
 
 	// Prepare the input arguments for the handler function
-	var inputs []reflect.Value
-
-	// First argument is always the client handle
-	inputs = append(inputs, reflect.ValueOf(mc))
-
-	// Second argument is the request payload, which might need to be a value or a pointer
-	if handlerWrapper.ReqType.Kind() == reflect.Ptr {
-		// If handler expects a pointer, pass the pointer directly
-		inputs = append(inputs, reqPayloadVal)
-	} else {
-		// If handler expects a value, dereference the pointer
-		inputs = append(inputs, reqPayloadVal.Elem())
-	}
+	// First argument is always the client handle, second is the request payload
+	inputs := []reflect.Value{reflect.ValueOf(mc), reqArg}
 
 	// Call the handler function
 	results := handlerWrapper.HandlerFunc.Call(inputs)
@@ -804,8 +793,11 @@ func (b *Broker) IterateClients(f func(ClientHandle) bool) {
 }
 
 // setupDefaultHandlers adds the default system handlers to the broker
-func (b *Broker) setupDefaultHandlers() {
-	// Add default client registration handler
+// Returns an error if any critical handler could not be registered.
+func (b *Broker) setupDefaultHandlers() error {
+	var errList []error
+	
+	// Add default client registration handler - this is critical for broker function
 	err := b.HandleClientRequest(shared_types.TopicClientRegister, func(client ClientHandle, req shared_types.ClientRegistration) (shared_types.ClientRegistrationResponse, error) {
 		// Get the managedClient from the ClientHandle
 		mc, ok := client.(*managedClient)
@@ -850,10 +842,10 @@ func (b *Broker) setupDefaultHandlers() {
 			ServerTime:       time.Now().Format(time.RFC3339),
 		}, nil
 	})
-
-	// Log error but don't fail if registration handler can't be added
+	
+	// Client registration handler is critical - return error if it fails
 	if err != nil {
-		b.config.logger.Info(fmt.Sprintf("Broker: Failed to add client registration handler: %v", err))
+		return errors.New("failed to register critical client registration handler")
 	}
 
 	// Handler for client-to-client proxy requests
@@ -881,7 +873,7 @@ func (b *Broker) setupDefaultHandlers() {
 			return resp, nil
 		})
 	if err != nil {
-		b.config.logger.Info(fmt.Sprintf("Broker: Failed to add proxy handler: %v", err))
+		errList = append(errList, fmt.Errorf("failed to add proxy handler: %w", err))
 	}
 
 	// Handler to list connected clients
@@ -902,6 +894,17 @@ func (b *Broker) setupDefaultHandlers() {
 			return shared_types.ListClientsResponse{Clients: list}, nil
 		})
 	if err != nil {
-		b.config.logger.Info(fmt.Sprintf("Broker: Failed to add list clients handler: %v", err))
+		errList = append(errList, fmt.Errorf("failed to add list clients handler: %w", err))
 	}
+	
+	// Log non-critical errors but still return them
+	if len(errList) > 0 {
+		for _, err := range errList {
+			b.config.logger.Error("Non-critical handler registration failed", "error", err)
+		}
+		// Return a combined error, but don't fail broker creation for non-critical handlers
+		return fmt.Errorf("some non-critical handlers failed to register: %v", errList)
+	}
+	
+	return nil
 }

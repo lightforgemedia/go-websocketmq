@@ -1,11 +1,14 @@
 package client
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/lightforgemedia/go-websocketmq/pkg/ergosockets"
 )
 
 // Options contains configuration values for ConnectWithOptions.
@@ -42,29 +45,81 @@ func DefaultOptions() Options {
 }
 
 // ConnectWithOptions establishes a connection using an Options struct.
-// Additional Option functions may be provided and override struct values.
-func ConnectWithOptions(urlStr string, optsStruct Options, extraOpts ...Option) (*Client, error) {
-	optionFns := []Option{
-		WithLogger(optsStruct.Logger),
-		WithDialOptions(optsStruct.DialOptions),
-		WithDefaultRequestTimeout(optsStruct.DefaultRequestTimeout),
-		WithWriteTimeout(optsStruct.WriteTimeout),
-		WithReadTimeout(optsStruct.ReadTimeout),
-		WithClientPingInterval(optsStruct.PingInterval),
+// This function directly initializes a Client without converting to functional options.
+func ConnectWithOptions(urlStr string, opts Options) (*Client, error) {
+	clientCtx, clientCancel := context.WithCancel(context.Background())
+	
+	// Initialize the client with options from the struct
+	cli := &Client{
+		config: clientConfig{
+			logger:                opts.Logger,
+			dialOptions:           opts.DialOptions,
+			defaultRequestTimeout: opts.DefaultRequestTimeout,
+			writeTimeout:          opts.WriteTimeout,
+			readTimeout:           opts.ReadTimeout,
+			pingInterval:          opts.PingInterval,
+			autoReconnect:         opts.AutoReconnect,
+			reconnectAttempts:     opts.ReconnectAttempts,
+			reconnectDelayMin:     opts.ReconnectDelayMin,
+			reconnectDelayMax:     opts.ReconnectDelayMax,
+			clientName:            opts.ClientName,
+			clientType:            opts.ClientType,
+			clientURL:             opts.ClientURL,
+		},
+		urlStr:               urlStr,
+		id:                   ergosockets.GenerateID(),
+		clientCtx:            clientCtx,
+		clientCancel:         clientCancel,
+		send:                 make(chan *ergosockets.Envelope, defaultClientSendBuffer),
+		pendingRequests:      make(map[string]chan *ergosockets.Envelope),
+		subscriptionHandlers: make(map[string]*ergosockets.HandlerWrapper),
+		requestHandlers:      make(map[string]*ergosockets.HandlerWrapper),
 	}
-	if optsStruct.AutoReconnect {
-		optionFns = append(optionFns, WithAutoReconnect(optsStruct.ReconnectAttempts, optsStruct.ReconnectDelayMin, optsStruct.ReconnectDelayMax))
+	
+	// Apply defaults for zero values
+	if cli.config.logger == nil {
+		cli.config.logger = slog.Default()
 	}
-	if optsStruct.ClientName != "" {
-		optionFns = append(optionFns, WithClientName(optsStruct.ClientName))
+	if cli.config.dialOptions == nil {
+		cli.config.dialOptions = &websocket.DialOptions{HTTPClient: http.DefaultClient}
 	}
-	if optsStruct.ClientType != "" {
-		optionFns = append(optionFns, WithClientType(optsStruct.ClientType))
+	if cli.config.defaultRequestTimeout <= 0 {
+		cli.config.defaultRequestTimeout = defaultClientReqTimeout
 	}
-	if optsStruct.ClientURL != "" {
-		optionFns = append(optionFns, WithClientURL(optsStruct.ClientURL))
+	if cli.config.writeTimeout <= 0 {
+		cli.config.writeTimeout = defaultWriteClientTimeout
 	}
-
-	optionFns = append(optionFns, extraOpts...)
-	return Connect(urlStr, optionFns...)
+	if cli.config.readTimeout <= 0 {
+		cli.config.readTimeout = defaultReadClientTimeout
+	}
+	
+	// Handle ping interval - special case
+	if cli.config.pingInterval < 0 {
+		cli.config.pingInterval = 0 // Disable ping
+	}
+	
+	// Handle reconnect delays
+	if cli.config.reconnectDelayMin <= 0 {
+		cli.config.reconnectDelayMin = defaultReconnectDelayMin
+	}
+	if cli.config.reconnectDelayMax <= 0 {
+		cli.config.reconnectDelayMax = defaultReconnectDelayMax
+	}
+	if cli.config.reconnectDelayMax < cli.config.reconnectDelayMin {
+		cli.config.reconnectDelayMax = cli.config.reconnectDelayMin
+	}
+	
+	// Establish initial connection
+	err := cli.establishConnection(cli.clientCtx)
+	if err != nil {
+		cli.config.logger.Info(fmt.Sprintf("Client %s: Initial connection failed: %v", cli.id, err))
+		if !cli.config.autoReconnect {
+			cli.Close() // Clean up if not reconnecting
+			return nil, fmt.Errorf("client initial connection failed and auto-reconnect disabled: %w", err)
+		}
+		// Auto-reconnect is enabled, start the loop
+		go cli.reconnectLoop()
+	}
+	
+	return cli, nil
 }

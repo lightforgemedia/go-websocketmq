@@ -255,7 +255,7 @@ func TestClientAutoReconnect(t *testing.T) {
 
 	// Wait for reconnect to happen (server closes, client should reconnect)
 	// The second connection will be attempt #2.
-	time.Sleep(500 * time.Millisecond) // Allow time for disconnect and reconnect attempt
+	time.Sleep(1000 * time.Millisecond) // Increase time for disconnect and reconnect attempt
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

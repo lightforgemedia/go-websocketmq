@@ -75,8 +75,52 @@ func NewTestClientWithOptions(t *testing.T, urlStr string, options ClientOptions
 
 	// The client.ConnectWithOptions will handle the functional options
 
-	// Connect the client with Options
-	cli, err := client.ConnectWithOptions(urlStr, clientOpts, opts...)
+	// Apply extra options if provided, otherwise connect directly with Options
+	var cli *client.Client
+	var err error
+	
+	if len(opts) > 0 {
+		// If additional options are provided, use the regular Connect function with all options
+		// First convert our Options struct to functional options
+		baseOpts := []client.Option{
+			client.WithLogger(clientOpts.Logger),
+			client.WithDefaultRequestTimeout(clientOpts.DefaultRequestTimeout),
+			client.WithWriteTimeout(clientOpts.WriteTimeout),
+			client.WithReadTimeout(clientOpts.ReadTimeout),
+			client.WithClientPingInterval(clientOpts.PingInterval),
+		}
+		
+		if clientOpts.AutoReconnect {
+			baseOpts = append(baseOpts, client.WithAutoReconnect(
+				clientOpts.ReconnectAttempts,
+				clientOpts.ReconnectDelayMin,
+				clientOpts.ReconnectDelayMax,
+			))
+		}
+		
+		if clientOpts.ClientName != "" {
+			baseOpts = append(baseOpts, client.WithClientName(clientOpts.ClientName))
+		}
+		
+		if clientOpts.ClientType != "" {
+			baseOpts = append(baseOpts, client.WithClientType(clientOpts.ClientType))
+		}
+		
+		if clientOpts.ClientURL != "" {
+			baseOpts = append(baseOpts, client.WithClientURL(clientOpts.ClientURL))
+		}
+		
+		// Add the extra options
+		baseOpts = append(baseOpts, opts...)
+		
+		// Connect with all options
+		cli, err = client.Connect(urlStr, baseOpts...)
+	} else {
+		// No extra options, use ConnectWithOptions directly
+		cli, err = client.ConnectWithOptions(urlStr, clientOpts)
+	}
+	
+	// Handle connection errors
 	if err != nil && cli == nil { // If connect truly failed and didn't even return a client for reconnect
 		t.Fatalf("Client Connect failed and returned nil client: %v", err)
 	}

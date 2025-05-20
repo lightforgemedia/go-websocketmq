@@ -57,6 +57,7 @@ func DefaultOptions() Options {
 
 // NewWithOptions creates a new Broker using an Options struct.
 // It validates the options and creates the broker with the specified configuration.
+// Zero values in the Options struct will be replaced with default values.
 //
 // Example:
 //     opts := broker.DefaultOptions()
@@ -69,6 +70,32 @@ func NewWithOptions(opts Options) (*Broker, error) {
 	// Validate options
 	if err := validateOptions(opts); err != nil {
 		return nil, err
+	}
+	
+	// Apply defaults for zero values
+	defaults := DefaultOptions()
+	
+	// Use defaults for nil or zero values
+	if opts.Logger == nil {
+		opts.Logger = defaults.Logger
+	}
+	if opts.AcceptOptions == nil {
+		opts.AcceptOptions = defaults.AcceptOptions
+	}
+	if opts.ClientSendBuffer == 0 {
+		opts.ClientSendBuffer = defaults.ClientSendBuffer
+	}
+	if opts.WriteTimeout == 0 {
+		opts.WriteTimeout = defaults.WriteTimeout
+	}
+	if opts.ReadTimeout == 0 {
+		opts.ReadTimeout = defaults.ReadTimeout
+	}
+	if opts.PingInterval == 0 {
+		opts.PingInterval = defaults.PingInterval
+	}
+	if opts.ServerRequestTimeout == 0 {
+		opts.ServerRequestTimeout = defaults.ServerRequestTimeout
 	}
 	
 	// Create broker with the specified configuration
@@ -92,36 +119,22 @@ func NewWithOptions(opts Options) (*Broker, error) {
 		mainCancel:         mainCancel,
 	}
 	
-	// Apply defaults for zero values
-	if b.config.logger == nil {
-		b.config.logger = slog.Default()
-	}
-	if b.config.clientSendBuffer == 0 {
-		b.config.clientSendBuffer = defaultClientSendBuffer
-	}
-	if b.config.writeTimeout == 0 {
-		b.config.writeTimeout = defaultWriteTimeout
-	}
-	if b.config.readTimeout == 0 {
-		b.config.readTimeout = defaultReadTimeout
-	}
-	if b.config.serverRequestTimeout == 0 {
-		b.config.serverRequestTimeout = defaultServerRequestTimeout
-	}
-	
-	// Handle ping interval logic
-	if b.config.pingInterval == 0 {
-		b.config.pingInterval = libraryDefaultPingInterval
-	} else if b.config.pingInterval < 0 {
+	// Handle ping interval special case - negative value means disable ping
+	if b.config.pingInterval < 0 {
 		b.config.pingInterval = 0 // Disable ping
 	}
 	
-	if b.config.acceptOptions == nil {
-		b.config.acceptOptions = &websocket.AcceptOptions{}
-	}
-	
 	// Add default handlers (registration, proxy, list clients)
-	b.setupDefaultHandlers()
+	if err := b.setupDefaultHandlers(); err != nil {
+		// Check if it's a critical error that should fail broker creation
+		if errors.Is(err, errors.New("failed to register critical client registration handler")) {
+			// Critical error, shut down the broker and return error
+			mainCancel() // Cancel main context to clean up resources
+			return nil, fmt.Errorf("broker initialization failed: %w", err)
+		}
+		// Non-critical error, just log it
+		b.config.logger.Error("Some non-critical handlers failed to register", "error", err)
+	}
 	
 	b.config.logger.Info(fmt.Sprintf("Broker: Initialized. Ping interval: %v, Client send buffer: %d", b.config.pingInterval, b.config.clientSendBuffer))
 	return b, nil

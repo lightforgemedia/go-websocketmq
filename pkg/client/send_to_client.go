@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 
 	"github.com/lightforgemedia/go-websocketmq/pkg/shared_types"
 )
@@ -87,41 +86,63 @@ func SendToClientRequest[T any](cli *Client, ctx context.Context, targetClientID
 		return nil, fmt.Errorf("client: SendToClientRequest to target '%s', topic '%s' returned successful response with null/no payload, but expected non-empty type %T", targetClientID, topic, zero)
 	}
 
-	// A more strict type checking approach for the test
-	// First, check the raw response to see if it's structured as expected for the target type
-	var originalMap map[string]interface{}
-	if err := json.Unmarshal(*rawPeerResponse, &originalMap); err != nil {
-		return nil, fmt.Errorf("client: SendToClientRequest failed to parse response JSON from target '%s', topic '%s': %w", targetClientID, topic, err)
-	}
-
-	// Check for fields that might not be handled by the target type
-	var zero T
-	rt := reflect.TypeOf(zero)
-	if rt != nil && rt.Kind() == reflect.Struct {
-		// Only do this check for struct types (not interfaces, pointers, etc.)
-		fields := make(map[string]bool)
-		for i := 0; i < rt.NumField(); i++ {
-			tag := rt.Field(i).Tag.Get("json")
-			if tag != "" && tag != "-" {
-				// Handle tag with options like `json:"name,omitempty"`
-				parts := strings.Split(tag, ",")
-				fields[parts[0]] = true
-			}
-		}
-
-		// Check if original response has fields not in our target type
-		for key := range originalMap {
-			if !fields[key] {
-				return nil, fmt.Errorf("client: SendToClientRequest failed: unmarshal response type mismatch from target '%s', topic '%s' - field '%s' not defined in type %T", targetClientID, topic, key, zero)
-			}
-		}
-	}
-
-	// Now try the actual unmarshal
+	// First, do a quick check - try to unmarshal directly to see if it works
 	var typedResponse T
 	if err := json.Unmarshal(*rawPeerResponse, &typedResponse); err != nil {
 		return nil, fmt.Errorf("client: SendToClientRequest failed to unmarshal response from target '%s', topic '%s' into %T: %w. Raw payload: %s", targetClientID, topic, typedResponse, err, string(*rawPeerResponse))
 	}
 
+	// Now do a strict field validation check
+	var mapCheck map[string]interface{}
+	if err := json.Unmarshal(*rawPeerResponse, &mapCheck); err != nil {
+		return nil, fmt.Errorf("client: SendToClientRequest failed to parse JSON from target '%s', topic '%s': %w", targetClientID, topic, err)
+	}
+
+	// Create an empty instance of T to check its fields
+	var zero T
+	emptyJSON, err := json.Marshal(zero)
+	if err != nil {
+		return nil, fmt.Errorf("client: SendToClientRequest failed to marshal empty %T for validation: %w", zero, err)
+	}
+
+	var emptyMap map[string]interface{}
+	if err := json.Unmarshal(emptyJSON, &emptyMap); err != nil {
+		// If we can't unmarshal the empty type, that's a strange case - continue anyway
+		emptyMap = make(map[string]interface{})
+	}
+	
+	// If response has fields that don't exist in T, it's a type mismatch
+	for k := range mapCheck {
+		if _, exists := emptyMap[k]; !exists {
+			return nil, fmt.Errorf("client: SendToClientRequest unmarshal error: response contains field '%s' not present in %T", k, zero)
+		}
+	}
+	
+	// Verify types by round-trip marshaling/unmarshaling
+	// This detects type mismatches like field type incompatibilities
+	verifyJSON, err := json.Marshal(typedResponse)
+	if err != nil {
+		return nil, fmt.Errorf("client: SendToClientRequest failed to marshal response for validation: %w", err)
+	}
+	
+	var verifyMap map[string]interface{}
+	if err := json.Unmarshal(verifyJSON, &verifyMap); err != nil {
+		return nil, fmt.Errorf("client: SendToClientRequest failed to unmarshal marshaled response: %w", err)
+	}
+	
+	// Compare original response with round-trip result
+	for k, v := range mapCheck {
+		if verifyVal, ok := verifyMap[k]; ok {
+			// For numeric types, Go's json decoder can convert between types
+			// Check specifically for zero values that might have been lost
+			origVal, _ := json.Marshal(v)
+			roundVal, _ := json.Marshal(verifyVal)
+			if string(origVal) != string(roundVal) {
+				return nil, fmt.Errorf("client: SendToClientRequest unmarshal error: field '%s' type mismatch between response and %T", k, zero)
+			}
+		}
+	}
+
+	// We already did the unmarshal above, no need to do it again
 	return &typedResponse, nil
 }

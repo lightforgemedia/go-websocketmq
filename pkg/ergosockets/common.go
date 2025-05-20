@@ -4,6 +4,7 @@ package ergosockets
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"time"
@@ -102,3 +103,51 @@ func NewHandlerWrapper(handlerFunc interface{}) (*HandlerWrapper, error) {
 // TimeNow is a wrapper for time.Now, useful for testing if time needs to be mocked.
 // For this implementation, we'll use the real time.Now().
 var TimeNow = time.Now
+
+// DecodeAndPrepareArg decodes a JSON payload into an instance of targetType
+// and returns a reflect.Value suitable for calling a handler function.
+// It handles whether targetType is a pointer or a value, and correctly handles
+// special cases like null payloads.
+func DecodeAndPrepareArg(payload json.RawMessage, targetType reflect.Type) (reflect.Value, error) {
+	// Check if target type is nil (safety check)
+	if targetType == nil {
+		return reflect.Value{}, fmt.Errorf("targetType cannot be nil")
+	}
+
+	// Check if the payload is nil or "null" JSON
+	isNullPayload := payload == nil || string(payload) == "null"
+
+	// Special handling for null payloads with pointer types
+	if isNullPayload && targetType.Kind() == reflect.Ptr {
+		// For pointer receivers that expect nil on null payloads,
+		// return the zero value of the target type (nil pointer)
+		return reflect.Zero(targetType), nil
+	}
+
+	// Create a new instance to unmarshal into
+	var instanceVal reflect.Value
+	if targetType.Kind() == reflect.Ptr {
+		// If it's a pointer type (*T), create a new pointer to the element type (T)
+		instanceVal = reflect.New(targetType.Elem())
+	} else {
+		// If it's a value type (T), create a new pointer to it (*T)
+		instanceVal = reflect.New(targetType)
+	}
+
+	// Only try to decode if the payload is not null
+	if !isNullPayload {
+		if err := json.Unmarshal(payload, instanceVal.Interface()); err != nil {
+			return reflect.Value{}, fmt.Errorf("failed to unmarshal payload into %s: %w. Raw: %s", 
+				targetType, err, string(payload))
+		}
+	}
+
+	// Return the appropriate value for the handler function
+	if targetType.Kind() == reflect.Ptr {
+		// If handler expects a pointer (*T), return the pointer directly
+		return instanceVal, nil
+	} else {
+		// If handler expects a value (T), dereference the pointer
+		return instanceVal.Elem(), nil
+	}
+}

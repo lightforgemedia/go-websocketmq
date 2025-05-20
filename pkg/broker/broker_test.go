@@ -495,7 +495,7 @@ func TestClientProxyTargetHandlerError(t *testing.T) {
 	clientA := setupClientWithNamedHandler(t, bs, clientA_Name, clientA_HandlerTopic,
 		func(req ProxyErrorRequest) (ProxyEchoResponse, error) {
 			t.Logf("%s: Error handler invoked, returning error.", clientA_Name)
-			return ProxyEchoResponse{}, fmt.Errorf(errorMessageFromA)
+			return ProxyEchoResponse{}, fmt.Errorf("%s", errorMessageFromA)
 		},
 	)
 	defer clientA.Close()
