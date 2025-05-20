@@ -88,7 +88,7 @@ func (b *Broker) UpgradeHandler() http.HandlerFunc {
 		}
 
 		// Generate a server-assigned ID (source of truth)
-		serverAssignedID := ergosockets.GenerateID()
+		// serverAssignedID := ergosockets.GenerateID()
 
 		// Get client URL if available
 		clientURL := ""
@@ -107,7 +107,7 @@ func (b *Broker) UpgradeHandler() http.HandlerFunc {
 		}
 
 		mc := &managedClient{
-			id:                    serverAssignedID,
+			id:                    clientProvidedID,
 			clientID:              clientProvidedID,
 			name:                  clientName,
 			clientType:            "unknown", // Will be updated during registration
@@ -859,13 +859,24 @@ func (b *Broker) setupDefaultHandlers() {
 	// Handler for client-to-client proxy requests
 	err = b.HandleClientRequest(shared_types.TopicProxyRequest,
 		func(src ClientHandle, req shared_types.ProxyRequest) (json.RawMessage, error) {
+			// Validate the proxy request
+			if req.TargetID == "" {
+				return nil, fmt.Errorf("proxy request missing target client ID")
+			}
+
 			dest, err := b.GetClient(req.TargetID)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("proxy target client: %w", err)
 			}
+
+			// Create a child context from the source client's context
+			// This ensures if the source client cancels, the proxy request is also cancelled
+			ctx, cancel := context.WithCancel(src.Context())
+			defer cancel()
+
 			var resp json.RawMessage
-			if err := dest.SendClientRequest(src.Context(), req.Topic, req.Payload, &resp, b.config.serverRequestTimeout); err != nil {
-				return nil, err
+			if err := dest.SendClientRequest(ctx, req.Topic, req.Payload, &resp, b.config.serverRequestTimeout); err != nil {
+				return nil, fmt.Errorf("proxy target error: %w", err)
 			}
 			return resp, nil
 		})

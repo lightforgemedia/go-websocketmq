@@ -574,13 +574,13 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 			break
 		}
 	}
-	
+
 	// Check for console errors
 	consoleResult, err := page.Eval(`() => JSON.stringify(window.consoleLog || [])`)
 	if err == nil && consoleResult != nil {
 		t.Logf("Console messages: %s", consoleResult.Value)
 	}
-	
+
 	if !connected {
 		t.Fatal("Browser client failed to connect")
 	}
@@ -601,16 +601,16 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	require.NotEmpty(t, browserClientID, "Should find browser client")
-	
+
 	// Give additional time for browser to complete handler registration after connection
 	time.Sleep(500 * time.Millisecond)
-	
+
 	// Check if handlers were registered
 	handlerCheckResult, err := page.Eval(`() => window.client && window.client._handlers && window.client._handlers.has && window.client._handlers.has('browser.slowOperation')`)
 	if err == nil && handlerCheckResult != nil {
 		t.Logf("Has slowOperation handler: %v", handlerCheckResult.Value)
 	}
-	
+
 	// Get registered handler topics
 	topicsResult, err := page.Eval(`() => {
 		if (window.client && window.client._handlers) {
@@ -676,24 +676,24 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 		req := map[string]interface{}{"delay": 500} // 500ms delay
 		resp, err := sendProxyCommand(t, controlClient, browserClientID, "browser.slowOperation", req)
 		require.NoError(t, err, "Slow operation should succeed")
-		
+
 		// Debug output
 		if resp == nil {
 			t.Fatal("Response is nil")
 		}
-		
+
 		// Check if success field exists
 		successVal, hasSuccess := resp["success"]
 		if !hasSuccess {
 			t.Fatalf("Response missing 'success' field. Got: %#v", resp)
 		}
-		
+
 		// Type assert with check
 		successBool, ok := successVal.(bool)
 		if !ok {
 			t.Fatalf("success field is not bool, got type %T with value %v", successVal, successVal)
 		}
-		
+
 		assert.True(t, successBool, "Should succeed")
 		assert.Equal(t, float64(500), resp["delayed"], "Should return delay value")
 	})
@@ -703,30 +703,30 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 		req := map[string]interface{}{"steps": 5}
 		resp, err := sendProxyCommand(t, controlClient, browserClientID, "browser.multiStep", req)
 		require.NoError(t, err, "Multi-step operation should succeed")
-		
+
 		// Check response validity
 		if resp == nil {
 			t.Fatal("Response is nil")
 		}
-		
+
 		// Check success field
 		successVal, hasSuccess := resp["success"]
 		if !hasSuccess {
 			t.Fatalf("Response missing 'success' field. Got: %#v", resp)
 		}
-		
+
 		successBool, ok := successVal.(bool)
 		if !ok {
 			t.Fatalf("success field is not bool, got type %T with value %v", successVal, successVal)
 		}
 		assert.True(t, successBool, "Should succeed")
-		
+
 		// Check results field
 		resultsVal, hasResults := resp["results"]
 		if !hasResults {
 			t.Fatalf("Response missing 'results' field. Got: %#v", resp)
 		}
-		
+
 		results, ok := resultsVal.([]interface{})
 		if !ok {
 			t.Fatalf("results field is not array, got type %T with value %v", resultsVal, resultsVal)
