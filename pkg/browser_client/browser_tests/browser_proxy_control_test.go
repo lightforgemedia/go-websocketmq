@@ -157,10 +157,16 @@ func TestBrowserProxyControl(t *testing.T) {
 							const wsUrl = window.location.origin.replace('http', 'ws') + '/wsmq';
 							console.log('Using WebSocket URL:', wsUrl);
 							
-							window.client = new WebSocketMQ.Client({});
+							// Create client with options matching the Options pattern
+							window.client = new WebSocketMQ.Client({
+								autoReconnect: true,
+								clientType: "browser",
+								clientName: "Browser Test Client"
+							});
 							console.log('Client created successfully');
 							
-							window.client.onConnect(() => {
+							// Updated onConnect handler to match new API signature
+							window.client.onConnect(function() {
 								console.log('Connected to WebSocket server with ID:', window.client.getID());
 								document.getElementById('status').textContent = 'Connected';
 								document.getElementById('client-id').textContent = window.client.getID();
@@ -215,14 +221,25 @@ func TestBrowserProxyControl(t *testing.T) {
 	// Navigate to the test page
 	page := browser.MustPage(httpServer.URL).WaitForLoad()
 
-	// Wait for WebSocket connection
+	// Wait for WebSocket connection with improved error handling
+	connected := false
+	var statusText string
+	var err error
 	for i := 0; i < 30; i++ {
 		time.Sleep(100 * time.Millisecond)
-		statusText, err := page.MustElement("#status").Text()
+		statusText, err = page.MustElement("#status").Text()
 		if err == nil && statusText == "Connected" {
+			connected = true
 			t.Logf("Browser connected after %d attempts", i+1)
 			break
 		}
+	}
+	if !connected {
+		t.Logf("Browser connection failed. Last status: %s, Error: %v", statusText, err)
+		// Get console logs for debugging connection issue
+		logs := page.GetConsoleLog()
+		t.Logf("Connection failure console logs: %v", logs)
+		t.Fatal("Browser client failed to connect to WebSocket server")
 	}
 
 	// Wait for browser client to connect and get ID from the broker
@@ -246,11 +263,12 @@ func TestBrowserProxyControl(t *testing.T) {
 	require.NotEmpty(t, browserClientID, "Browser client ID should not be empty")
 	t.Logf("Browser client ID from broker: %s", browserClientID)
 
-	// Create a control client
-	controlClient := testutil.NewTestClient(t, bs.WSURL,
-		client.WithClientName("Control Client"),
-		client.WithClientType("cli"),
-	)
+	// Create a control client with Options pattern
+	controlClientOpts := client.DefaultOptions()
+	controlClientOpts.ClientName = "Control Client"
+	controlClientOpts.ClientType = "cli"
+	controlClient, err := client.ConnectWithOptions(bs.WSURL, controlClientOpts)
+	require.NoError(t, err, "Control client should connect successfully")
 
 	// Wait for control client to be connected
 	var controlHandle broker.ClientHandle
@@ -441,7 +459,7 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 		t.Skip("Skipping browser test in short mode")
 	}
 
-	// Create broker server
+	// Create broker server with Options pattern
 	opts := broker.DefaultOptions()
 	opts.AcceptOptions = &websocket.AcceptOptions{
 		OriginPatterns: []string{"*"},
@@ -478,38 +496,60 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 						originalConsoleError.apply(console, args);
 					};
 					
-					// Track command execution timing
+					// Track command execution timing - fixed to return regular function instead of async
 					function timedHandler(name, handler) {
 						return function(req) {
 							const start = Date.now();
 							window.commandLog.push({command: name, start: start});
 							
-							const handleAsync = async () => {
-								try {
-									const result = await handler(req);
-									const duration = Date.now() - start;
-									window.commandLog[window.commandLog.length - 1].duration = duration;
-									window.commandLog[window.commandLog.length - 1].success = true;
-									return result;
-								} catch (error) {
-									const duration = Date.now() - start;
-									window.commandLog[window.commandLog.length - 1].duration = duration;
-									window.commandLog[window.commandLog.length - 1].success = false;
-									window.commandLog[window.commandLog.length - 1].error = error.message;
-									throw error;
+							try {
+								// Call the handler directly, preserving its Promise return
+								const result = handler(req);
+								
+								// If the handler returns a Promise, chain timing logic
+								if (result && typeof result.then === 'function') {
+									return result.then(value => {
+										const duration = Date.now() - start;
+										window.commandLog[window.commandLog.length - 1].duration = duration;
+										window.commandLog[window.commandLog.length - 1].success = true;
+										return value;
+									}).catch(error => {
+										const duration = Date.now() - start;
+										window.commandLog[window.commandLog.length - 1].duration = duration;
+										window.commandLog[window.commandLog.length - 1].success = false;
+										window.commandLog[window.commandLog.length - 1].error = error.message;
+										throw error;
+									});
 								}
-							};
-							
-							return handleAsync();
+								
+								// For non-Promise returns, record timing and return result
+								const duration = Date.now() - start;
+								window.commandLog[window.commandLog.length - 1].duration = duration;
+								window.commandLog[window.commandLog.length - 1].success = true;
+								return result;
+							} catch (error) {
+								// For synchronous errors
+								const duration = Date.now() - start;
+								window.commandLog[window.commandLog.length - 1].duration = duration;
+								window.commandLog[window.commandLog.length - 1].success = false;
+								window.commandLog[window.commandLog.length - 1].error = error.message;
+								throw error;
+							}
 						};
 					}
 					
 					window.addEventListener('DOMContentLoaded', function() {
 						try {
-							window.client = new WebSocketMQ.Client({});
+							// Create client with options matching the Options pattern
+							window.client = new WebSocketMQ.Client({
+								autoReconnect: true,
+								clientType: "browser",
+								clientName: "Advanced Browser Test Client"
+							});
 							console.log('Advanced client created');
 							
-							window.client.onConnect((event) => {
+							// Updated onConnect callback signature
+							window.client.onConnect(function() {
 								try {
 									console.log('Connected to WebSocket server');
 									document.getElementById('status').textContent = 'Connected';
@@ -564,8 +604,8 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 	browser := testutil.NewRodBrowser(t, testutil.WithHeadless(true))
 	page := browser.MustPage(httpServer.URL).WaitForLoad()
 
-	// Wait for connection
-	var connected bool
+	// Wait for connection with improved error handling
+	connected := false
 	for i := 0; i < 30; i++ {
 		time.Sleep(100 * time.Millisecond)
 		statusText, err := page.MustElement("#status").Text()
@@ -575,13 +615,12 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 		}
 	}
 
-	// Check for console errors
-	consoleResult, err := page.Eval(`() => JSON.stringify(window.consoleLog || [])`)
-	if err == nil && consoleResult != nil {
-		t.Logf("Console messages: %s", consoleResult.Value)
-	}
-
+	// Check for console errors if connection failed
 	if !connected {
+		consoleResult, err := page.Eval(`() => JSON.stringify(window.consoleLog || [])`)
+		if err == nil && consoleResult != nil {
+			t.Logf("Console messages: %s", consoleResult.Value)
+		}
 		t.Fatal("Browser client failed to connect")
 	}
 
@@ -628,9 +667,10 @@ func TestBrowserProxyControlAdvanced(t *testing.T) {
 		t.Logf("Registered handler topics: %v", topicsResult.Value)
 	}
 
-	// Create control client
-	controlClient := testutil.NewTestClient(t, bs.WSURL)
-	require.NotNil(t, controlClient, "Control client should be created")
+	// Create control client with Options pattern
+	controlClientOpts := client.DefaultOptions()
+	controlClient, err := client.ConnectWithOptions(bs.WSURL, controlClientOpts)
+	require.NoError(t, err, "Control client should connect successfully")
 
 	// Wait for control client to be connected
 	var controlClientID string

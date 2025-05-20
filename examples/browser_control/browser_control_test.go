@@ -15,27 +15,35 @@ import (
 // TestBrowserControl tests the browser control proxy functionality
 func TestBrowserControl(t *testing.T) {
 	// Create a test broker
-	bs := testutil.NewBrokerServer(t, broker.WithPingInterval(-1))
+	opts := broker.DefaultOptions()
+	opts.PingInterval = -1 // Disable pings for test
+	bs := testutil.NewBrokerServer(t, opts)
 
 	// Create "browser" client that will receive commands
-	browserClient := testutil.NewTestClient(t, bs.WSURL,
-		client.WithClientName("Test Browser"),
-		client.WithClientType("browser"),
-		client.WithClientPingInterval(-1),
-	)
+	browserClientOpts := client.DefaultOptions()
+	browserClientOpts.ClientName = "Test Browser"
+	browserClientOpts.ClientType = "browser"
+	browserClientOpts.PingInterval = -1 // Disable pings for test
+	browserClient, err := client.ConnectWithOptions(bs.WSURL, browserClientOpts)
+	if err != nil {
+		t.Fatalf("Failed to create browser client: %v", err)
+	}
 
 	// Set up browser handlers
 	setupBrowserHandlers(t, browserClient)
 
 	// Create control client that will send commands
-	controlClient := testutil.NewTestClient(t, bs.WSURL,
-		client.WithClientName("Test Control"),
-		client.WithClientType("cli"),
-		client.WithClientPingInterval(-1),
-	)
+	controlClientOpts := client.DefaultOptions()
+	controlClientOpts.ClientName = "Test Control"
+	controlClientOpts.ClientType = "cli"
+	controlClientOpts.PingInterval = -1 // Disable pings for test
+	controlClient, err := client.ConnectWithOptions(bs.WSURL, controlClientOpts)
+	if err != nil {
+		t.Fatalf("Failed to create control client: %v", err)
+	}
 
 	// Wait for both clients to connect
-	_, err := testutil.WaitForClient(t, bs.Broker, browserClient.ID(), 2*time.Second)
+	_, err = testutil.WaitForClient(t, bs.Broker, browserClient.ID(), 2*time.Second)
 	if err != nil {
 		t.Fatalf("Browser client did not connect: %v", err)
 	}
