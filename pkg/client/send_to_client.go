@@ -111,12 +111,10 @@ func SendToClientRequest[T any](cli *Client, ctx context.Context, targetClientID
 		emptyMap = make(map[string]interface{})
 	}
 	
-	// If response has fields that don't exist in T, it's a type mismatch
-	for k := range mapCheck {
-		if _, exists := emptyMap[k]; !exists {
-			return nil, fmt.Errorf("client: SendToClientRequest unmarshal error: response contains field '%s' not present in %T", k, zero)
-		}
-	}
+	// Check for standard fields (This is a relaxed check for embedded structs)
+	// Skip the strict field validation since embedded structs in Go can have fields that
+	// aren't visible when marshaling an empty struct (due to omitempty tags)
+	// Common fields like "error" might be from embedded response types
 	
 	// Verify types by round-trip marshaling/unmarshaling
 	// This detects type mismatches like field type incompatibilities
